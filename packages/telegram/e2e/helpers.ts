@@ -23,7 +23,7 @@ export async function sendAndWait(
 
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    await sleep(500)
+    await sleep(1500)
     const messages = await client.getMessages(botUsername, { limit: 5 })
     for (const msg of messages) {
       // Bot messages have .out === false (not sent by us)

@@ -14,8 +14,11 @@ import { createBot } from "./bot"
 import { SessionManager } from "./session-manager"
 import { TurnManager } from "./turn-manager"
 import { EventBus } from "./event-bus"
+import { PendingRequests } from "./pending-requests"
 import { markdownToTelegramHtml } from "./send/format"
 import { chunkMessage } from "./send/chunker"
+import { formatPermissionMessage } from "./handlers/permissions"
+import { formatQuestionMessage } from "./handlers/questions"
 
 const config = loadConfig()
 
@@ -42,8 +45,13 @@ const sessionManager = new SessionManager({
 
 const turnManager = new TurnManager()
 
+const pendingRequests = new PendingRequests({
+  maxEntries: 200,
+  ttlMs: 10 * 60 * 1000, // 10 minutes
+})
+
 // --- Create bot with deps ---
-const bot = createBot(config, { sdk, sessionManager, turnManager })
+const bot = createBot(config, { sdk, sessionManager, turnManager, pendingRequests })
 
 // --- Response sender (format + chunk + send) ---
 async function sendFormattedResponse(chatId: number, markdown: string) {
@@ -109,6 +117,41 @@ const eventBus = new EventBus({
         turnManager.end(sessionId)
         break
       }
+
+      case "permission.asked": {
+        const perm = event.properties
+        const { text, reply_markup } = formatPermissionMessage(perm)
+        pendingRequests.set(perm.id, {
+          type: "permission",
+          createdAt: Date.now(),
+        })
+        bot.api
+          .sendMessage(chatId, text, { parse_mode: "HTML", reply_markup })
+          .catch((err) =>
+            console.error("Error sending permission message:", err),
+          )
+        break
+      }
+
+      case "question.asked": {
+        const q = event.properties
+        if (q.questions && q.questions.length > 0) {
+          pendingRequests.set(q.id, {
+            type: "question",
+            createdAt: Date.now(),
+            questions: q.questions.map((qq: any) => ({
+              options: qq.options,
+            })),
+          })
+          const { text, reply_markup } = formatQuestionMessage(q)
+          bot.api
+            .sendMessage(chatId, text, { reply_markup })
+            .catch((err) =>
+              console.error("Error sending question message:", err),
+            )
+        }
+        break
+      }
     }
   },
 })
@@ -118,10 +161,10 @@ await eventBus.start()
 console.log("EventBus listening for SSE events")
 
 // Periodic TTL cleanup
-const cleanupInterval = setInterval(
-  () => sessionManager.cleanup(),
-  5 * 60 * 1000,
-)
+const cleanupInterval = setInterval(() => {
+  sessionManager.cleanup()
+  pendingRequests.cleanup()
+}, 5 * 60 * 1000)
 
 // --- Graceful shutdown ---
 const shutdown = async () => {

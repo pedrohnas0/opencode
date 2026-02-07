@@ -2,6 +2,7 @@ import { describe, test, expect, mock, beforeEach } from "bun:test"
 import { createBot, START_MESSAGE, type BotDeps } from "./bot"
 import { SessionManager } from "./session-manager"
 import { TurnManager } from "./turn-manager"
+import { PendingRequests } from "./pending-requests"
 import type { Config } from "./config"
 
 const testConfig: Config = {
@@ -94,7 +95,7 @@ describe("handleMessage", () => {
     expect(promptMock).toHaveBeenCalledTimes(1)
   })
 
-  test("starts a turn in TurnManager", async () => {
+  test("starts a turn and returns it", async () => {
     const { handleMessage } = await import("./bot")
     const sm = new SessionManager({ maxEntries: 10, ttlMs: 60000 })
     const tm = new TurnManager()
@@ -107,7 +108,7 @@ describe("handleMessage", () => {
       },
     } as any
 
-    await handleMessage({
+    const result = await handleMessage({
       chatId: 123,
       text: "hello",
       sdk,
@@ -115,8 +116,10 @@ describe("handleMessage", () => {
       turnManager: tm,
     })
 
+    expect(result.turn).toBeDefined()
+    expect(result.turn.chatId).toBe(123)
+    expect(result.turn.sessionId).toBe("s1")
     expect(tm.get("s1")).toBeDefined()
-    expect(tm.get("s1")!.chatId).toBe(123)
   })
 })
 
