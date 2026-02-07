@@ -2,13 +2,15 @@ import { spawn, type Subprocess } from "bun"
 import type { TelegramClient } from "telegram"
 import { createTestClient } from "./client"
 import { loadConfig } from "../src/config"
+import { resolve } from "node:path"
 
+let serverProcess: Subprocess | null = null
 let botProcess: Subprocess | null = null
 let testClient: TelegramClient | null = null
 let botUsername = ""
 
 /**
- * Start the bot as a subprocess and connect the gramjs test client.
+ * Start OpenCode server + bot as subprocesses and connect the gramjs test client.
  * Must be called in beforeAll().
  */
 export async function setup(): Promise<void> {
@@ -26,19 +28,41 @@ export async function setup(): Promise<void> {
   }
 
   botUsername = config.e2e.botUsername
+  const packageDir = import.meta.dir.replace("/e2e", "")
+  const opencodeDir = resolve(packageDir, "../opencode")
 
-  // Start bot subprocess
-  botProcess = spawn(["bun", "run", "src/index.ts"], {
-    cwd: import.meta.dir.replace("/e2e", ""),
-    env: { ...process.env },
+  // 1. Start OpenCode server
+  serverProcess = spawn(
+    [process.execPath, "run", "--conditions=browser", "./src/index.ts", "serve", "--port=0"],
+    {
+      cwd: opencodeDir,
+      env: { ...process.env },
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  )
+
+  const serverUrl = await waitForPattern(
+    serverProcess,
+    /opencode server listening on (https?:\/\/[^\s]+)/,
+    30000,
+    "OpenCode server",
+  )
+
+  console.log(`E2E: OpenCode server at ${serverUrl}`)
+
+  // 2. Start bot with OPENCODE_URL pointing to our server
+  botProcess = spawn([process.execPath, "run", "src/index.ts"], {
+    cwd: packageDir,
+    env: { ...process.env, OPENCODE_URL: serverUrl },
     stdout: "pipe",
     stderr: "pipe",
   })
 
-  // Wait for "Bot started" in stdout
-  await waitForReady(botProcess, 15000)
+  await waitForPattern(botProcess, /Bot started/, 30000, "Bot")
+  console.log("E2E: Bot started")
 
-  // Connect gramjs test client
+  // 3. Connect gramjs test client
   testClient = await createTestClient({
     apiId: config.e2e.apiId,
     apiHash: config.e2e.apiHash,
@@ -47,7 +71,7 @@ export async function setup(): Promise<void> {
 }
 
 /**
- * Stop the bot and disconnect the test client.
+ * Stop everything and disconnect the test client.
  * Must be called in afterAll().
  */
 export async function teardown(): Promise<void> {
@@ -58,6 +82,10 @@ export async function teardown(): Promise<void> {
   if (botProcess) {
     botProcess.kill()
     botProcess = null
+  }
+  if (serverProcess) {
+    serverProcess.kill()
+    serverProcess = null
   }
 }
 
@@ -71,38 +99,45 @@ export function getBotUsername(): string {
   return botUsername
 }
 
-async function waitForReady(proc: Subprocess, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  const reader = proc.stdout?.getReader()
-  if (!reader) throw new Error("Bot process has no stdout")
+/**
+ * Read stdout of a process until a regex pattern matches.
+ * Uses `for await` on the ReadableStream — reliable with Bun.spawn.
+ * Returns the first capture group if present, otherwise the full match.
+ */
+async function waitForPattern(
+  proc: Subprocess,
+  pattern: RegExp,
+  timeoutMs: number,
+  label: string,
+): Promise<string> {
+  if (!proc.stdout) throw new Error(`${label} process has no stdout`)
 
   let output = ""
   const decoder = new TextDecoder()
 
-  while (Date.now() < deadline) {
-    const { value, done } = await Promise.race([
-      reader.read(),
-      new Promise<{ value: undefined; done: true }>((resolve) =>
-        setTimeout(() => resolve({ value: undefined, done: true }), 1000),
-      ),
-    ])
-
-    if (value) {
-      output += decoder.decode(value)
-      if (output.includes("Bot started")) {
-        reader.releaseLock()
-        return
+  // Race the stream against a timeout
+  const result = await Promise.race([
+    (async () => {
+      for await (const chunk of proc.stdout!) {
+        output += decoder.decode(chunk)
+        const match = output.match(pattern)
+        if (match) {
+          return match[1] ?? match[0]
+        }
       }
-    }
-    if (done && !output.includes("Bot started")) {
-      break
-    }
-  }
+      // Stream ended without match
+      return null
+    })(),
+    new Promise<null>((resolve) =>
+      setTimeout(() => resolve(null), timeoutMs),
+    ),
+  ])
 
-  // Check if process exited
+  if (result) return result
+
   if (proc.exitCode !== null) {
-    throw new Error(`Bot process exited with code ${proc.exitCode}. Output: ${output}`)
+    throw new Error(`${label} exited with code ${proc.exitCode}. Output: ${output}`)
   }
 
-  throw new Error(`Bot did not start within ${timeoutMs}ms. Output: ${output}`)
+  throw new Error(`${label} did not match "${pattern}" within ${timeoutMs}ms. Output: ${output}`)
 }

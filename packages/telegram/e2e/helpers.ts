@@ -15,7 +15,10 @@ export async function sendAndWait(
   text: string,
   timeoutMs = 15000,
 ): Promise<Api.Message> {
-  const before = Math.floor(Date.now() / 1000)
+  // Get the latest message ID before sending, so we only look for newer messages
+  const messagesBefore = await client.getMessages(botUsername, { limit: 1 })
+  const lastIdBefore = messagesBefore[0]?.id ?? 0
+
   await client.sendMessage(botUsername, { message: text })
 
   const deadline = Date.now() + timeoutMs
@@ -24,7 +27,8 @@ export async function sendAndWait(
     const messages = await client.getMessages(botUsername, { limit: 5 })
     for (const msg of messages) {
       // Bot messages have .out === false (not sent by us)
-      if (!msg.out && msg.date >= before) {
+      // Only consider messages with ID greater than what existed before we sent
+      if (!msg.out && msg.id > lastIdBefore) {
         return msg
       }
     }

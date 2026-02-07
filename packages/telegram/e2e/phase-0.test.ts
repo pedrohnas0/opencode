@@ -5,7 +5,7 @@ import { sendAndWait, assertContains } from "./helpers"
 describe("Phase 0 — Bot Skeleton", () => {
   beforeAll(async () => {
     await setup()
-  }, 30000) // 30s timeout for setup
+  }, 90000) // 90s: OpenCode server + bot + gramjs startup
 
   afterAll(async () => {
     await teardown()
