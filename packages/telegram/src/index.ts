@@ -25,9 +25,12 @@ const externalUrl = process.env.OPENCODE_URL
 if (externalUrl) {
   console.log(`Connecting to OpenCode server at ${externalUrl}...`)
 } else {
-  console.log("Starting OpenCode server...")
+  console.log(`Starting OpenCode server for ${config.projectDirectory}...`)
 }
-const sdkHandle = await initSdk(externalUrl)
+const sdkHandle = await initSdk({
+  opencodeUrl: externalUrl,
+  projectDirectory: config.projectDirectory,
+})
 const sdk = sdkHandle.client
 console.log(`OpenCode server at ${sdkHandle.url}`)
 

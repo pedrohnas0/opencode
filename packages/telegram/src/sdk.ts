@@ -18,16 +18,25 @@ export type SdkHandle = {
   cleanup: () => void
 }
 
-export async function initSdk(opencodeUrl?: string): Promise<SdkHandle> {
-  if (opencodeUrl) {
+export async function initSdk(opts: {
+  opencodeUrl?: string
+  projectDirectory: string
+}): Promise<SdkHandle> {
+  if (opts.opencodeUrl) {
     // Connect to existing server
-    const client = createOpencodeClient({ baseUrl: opencodeUrl })
-    return { client, url: opencodeUrl, cleanup: () => {} }
+    const client = createOpencodeClient({
+      baseUrl: opts.opencodeUrl,
+      directory: opts.projectDirectory,
+    })
+    return { client, url: opts.opencodeUrl, cleanup: () => {} }
   }
 
   // Spawn local server from monorepo source
-  const { url, proc } = await spawnOpencodeServer()
-  const client = createOpencodeClient({ baseUrl: url })
+  const { url, proc } = await spawnOpencodeServer(opts.projectDirectory)
+  const client = createOpencodeClient({
+    baseUrl: url,
+    directory: opts.projectDirectory,
+  })
   return {
     client,
     url,
@@ -35,12 +44,12 @@ export async function initSdk(opencodeUrl?: string): Promise<SdkHandle> {
   }
 }
 
-async function spawnOpencodeServer(): Promise<{
+async function spawnOpencodeServer(projectDirectory: string): Promise<{
   url: string
   proc: ReturnType<typeof nodeSpawn>
 }> {
-  // Find the opencode package directory by walking up to find the monorepo root
-  // import.meta.dir = packages/telegram/src → go up 3 levels to monorepo root
+  // CWD must be the opencode package (for module resolution)
+  // The project directory is passed via the SDK client's x-opencode-directory header
   const monorepoRoot = resolve(import.meta.dir, "../../..")
   const opencodeDir = resolve(monorepoRoot, "packages/opencode")
 

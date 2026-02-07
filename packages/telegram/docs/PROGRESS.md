@@ -105,12 +105,32 @@ e2e/
   phase-0.test.ts               ← Increased beforeAll timeout for server startup
 ```
 
+### How to Run
+
+```bash
+# From the telegram package directory:
+cd packages/telegram
+
+# Set OPENCODE_DIRECTORY to the project you want the AI to work on:
+env $(grep -v '^#' .env | xargs) OPENCODE_DIRECTORY=/home/pedro/dev bun run src/index.ts
+
+# Or connect to an existing OpenCode server:
+env $(grep -v '^#' .env | xargs) OPENCODE_URL=http://127.0.0.1:4096 bun run src/index.ts
+```
+
+**How it works:**
+- Without `OPENCODE_URL`: spawns a local OpenCode server from monorepo source (`packages/opencode`)
+- The server CWD stays at `packages/opencode` (for module resolution)
+- `OPENCODE_DIRECTORY` is sent as `x-opencode-directory` header in every SDK request
+- The OpenCode server uses that header to know which project to operate on
+
 ### Lessons Learned
 - `Bun.spawn` stdout with `getReader()` + `Promise.race` timeout breaks stream reading — use `for await` instead
 - `process.execPath` resolves bun correctly; ENOENT from spawn usually means CWD doesn't exist
 - E2E runner must spawn OpenCode server separately (not nested inside bot) to avoid subprocess hang
 - `sendAndWait` must use message ID ordering (not timestamps) to avoid picking up stale responses
 - `createOpencode({ port: 0 })` from SDK needs the `opencode` binary — dev mode uses bun source directly
+- Server CWD must be `packages/opencode` (module resolution); project dir via `x-opencode-directory` header
 
 ---
 
