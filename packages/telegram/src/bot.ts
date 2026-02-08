@@ -21,6 +21,16 @@ import {
 } from "./handlers/questions"
 import { startTypingLoop } from "./handlers/typing"
 import { DraftStream } from "./send/draft-stream"
+import { createAllowlistMiddleware } from "./handlers/allowlist"
+import {
+  handleList,
+  handleRename,
+  handleDelete,
+  handleInfo,
+  handleHistory,
+  handleSummarize,
+  parseSessionCallback,
+} from "./handlers/sessions"
 
 export const START_MESSAGE = [
   "OpenCode Telegram Bot",
@@ -40,6 +50,9 @@ export type BotDeps = {
 export function createBot(config: Config, deps?: BotDeps) {
   const bot = new Bot(config.botToken)
 
+  // Allowlist middleware — must be first (blocks unauthorized users)
+  bot.use(createAllowlistMiddleware(config.allowedUsers, config.allowAllUsers))
+
   bot.command("start", async (ctx) => {
     await ctx.reply(START_MESSAGE)
   })
@@ -51,6 +64,42 @@ export function createBot(config: Config, deps?: BotDeps) {
       const chatId = ctx.chat.id
       await handleNew({ chatId, sdk, sessionManager })
       await ctx.reply("New session started.")
+    })
+
+    bot.command("list", async (ctx) => {
+      const result = await handleList({ sdk })
+      await ctx.reply(result.text, { reply_markup: result.reply_markup })
+    })
+
+    bot.command("rename", async (ctx) => {
+      const chatKey = String(ctx.chat.id)
+      const title = ctx.match?.trim() ?? ""
+      const result = await handleRename({ chatKey, title, sdk, sessionManager })
+      await ctx.reply(result)
+    })
+
+    bot.command("delete", async (ctx) => {
+      const chatKey = String(ctx.chat.id)
+      const result = await handleDelete({ chatKey, sdk, sessionManager })
+      await ctx.reply(result)
+    })
+
+    bot.command("info", async (ctx) => {
+      const chatKey = String(ctx.chat.id)
+      const result = await handleInfo({ chatKey, sdk, sessionManager })
+      await ctx.reply(result)
+    })
+
+    bot.command("history", async (ctx) => {
+      const chatKey = String(ctx.chat.id)
+      const result = await handleHistory({ chatKey, sdk, sessionManager })
+      await ctx.reply(result)
+    })
+
+    bot.command("summarize", async (ctx) => {
+      const chatKey = String(ctx.chat.id)
+      const result = await handleSummarize({ chatKey, sdk, sessionManager })
+      await ctx.reply(result)
     })
 
     bot.command("cancel", async (ctx) => {
@@ -116,6 +165,20 @@ export function createBot(config: Config, deps?: BotDeps) {
         }
         return
       }
+
+      if (data.startsWith("sess:")) {
+        const parsed = parseSessionCallback(data)
+        if (!parsed) return
+        const chatKey = String(ctx.from.id)
+        const result = await handleSessionCallback({
+          chatKey,
+          sessionPrefix: parsed.sessionPrefix,
+          sdk,
+          sessionManager,
+        })
+        await ctx.editMessageText(result)
+        return
+      }
     })
 
     bot.on("message:text", async (ctx) => {
@@ -166,6 +229,15 @@ export async function handleMessage(params: {
   const chatKey = String(chatId)
 
   const entry = await sessionManager.getOrCreate(chatKey, sdk)
+
+  // Streaming interruption fix (N2): abort old server-side prompt
+  const existingTurn = turnManager.get(entry.sessionId)
+  if (existingTurn) {
+    sdk.session.abort({ sessionID: entry.sessionId }).catch((err: unknown) => {
+      console.error("Abort error:", err)
+    })
+  }
+
   const turn = turnManager.start(entry.sessionId, chatId)
 
   // Attach draft stream BEFORE firing the prompt, so SSE events
@@ -184,6 +256,25 @@ export async function handleMessage(params: {
   })
 
   return { turn }
+}
+
+export async function handleSessionCallback(params: {
+  chatKey: string
+  sessionPrefix: string
+  sdk: OpencodeClient
+  sessionManager: SessionManager
+}): Promise<string> {
+  const { chatKey, sessionPrefix, sdk, sessionManager } = params
+  const result = await sdk.session.list()
+  const sessions = (result as any).data ?? []
+  const match = sessions.find((s: any) => s.id.startsWith(sessionPrefix))
+  if (!match) return "Session not found."
+
+  sessionManager.set(chatKey, {
+    sessionId: match.id,
+    directory: match.directory ?? "",
+  })
+  return `Switched to: ${match.title || match.id}`
 }
 
 export async function handleNew(params: {

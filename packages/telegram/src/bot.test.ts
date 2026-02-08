@@ -10,6 +10,8 @@ const testConfig: Config = {
   opencodeUrl: "http://127.0.0.1:4096",
   projectDirectory: "/tmp/test",
   testEnv: false,
+  allowedUsers: [],
+  allowAllUsers: true,
   e2e: { apiId: 0, apiHash: "", session: "", botUsername: "" },
 }
 
@@ -175,5 +177,125 @@ describe("handleNew", () => {
 
     expect(sm.get("456")!.sessionId).toBe("fresh-session")
     expect(result.sessionId).toBe("fresh-session")
+  })
+})
+
+// --- Phase 4 tests: handleMessage abort, session commands ---
+
+describe("handleMessage — streaming interruption fix", () => {
+  test("calls sdk.session.abort when existing turn present", async () => {
+    const { handleMessage } = await import("./bot")
+    const abortMock = mock(async () => ({}))
+    const promptMock = mock(async () => ({ data: {} }))
+    const sm = new SessionManager({ maxEntries: 10, ttlMs: 60000 })
+    const tm = new TurnManager()
+
+    sm.set("123", { sessionId: "s1", directory: "/tmp" })
+    const sdk = {
+      session: {
+        prompt: promptMock,
+        create: mock(async () => ({ data: { id: "s1" } })),
+        abort: abortMock,
+      },
+    } as any
+
+    // First message — creates a turn
+    await handleMessage({
+      chatId: 123,
+      text: "first message",
+      sdk,
+      sessionManager: sm,
+      turnManager: tm,
+    })
+
+    // Second message — should abort old turn
+    await handleMessage({
+      chatId: 123,
+      text: "second message",
+      sdk,
+      sessionManager: sm,
+      turnManager: tm,
+    })
+
+    await new Promise((r) => setTimeout(r, 10))
+
+    expect(abortMock).toHaveBeenCalledTimes(1)
+    const abortCall = abortMock.mock.calls[0]![0] as any
+    expect(abortCall.sessionID).toBe("s1")
+  })
+
+  test("does NOT call abort when no existing turn", async () => {
+    const { handleMessage } = await import("./bot")
+    const abortMock = mock(async () => ({}))
+    const promptMock = mock(async () => ({ data: {} }))
+    const sm = new SessionManager({ maxEntries: 10, ttlMs: 60000 })
+    const tm = new TurnManager()
+
+    sm.set("123", { sessionId: "s1", directory: "/tmp" })
+    const sdk = {
+      session: {
+        prompt: promptMock,
+        create: mock(async () => ({ data: { id: "s1" } })),
+        abort: abortMock,
+      },
+    } as any
+
+    // First message — no existing turn
+    await handleMessage({
+      chatId: 123,
+      text: "first message",
+      sdk,
+      sessionManager: sm,
+      turnManager: tm,
+    })
+
+    await new Promise((r) => setTimeout(r, 10))
+    expect(abortMock).not.toHaveBeenCalled()
+  })
+})
+
+describe("handleSessionCallback", () => {
+  test("switches session on valid sess: callback", async () => {
+    const { handleSessionCallback } = await import("./bot")
+    const sm = new SessionManager({ maxEntries: 10, ttlMs: 60000 })
+    const sdk = {
+      session: {
+        list: mock(async () => ({
+          data: [
+            { id: "session-full-id-12345", title: "My Session", directory: "/tmp", time: { created: 1000, updated: 2000 } },
+          ],
+        })),
+      },
+    } as any
+
+    const result = await handleSessionCallback({
+      chatKey: "123",
+      sessionPrefix: "session-full-id-1234",
+      sdk,
+      sessionManager: sm,
+    })
+
+    expect(result).toContain("Switched to")
+    expect(result).toContain("My Session")
+    expect(sm.get("123")?.sessionId).toBe("session-full-id-12345")
+  })
+
+  test("returns 'Session not found.' for unknown prefix", async () => {
+    const { handleSessionCallback } = await import("./bot")
+    const sm = new SessionManager({ maxEntries: 10, ttlMs: 60000 })
+    const sdk = {
+      session: {
+        list: mock(async () => ({ data: [] })),
+      },
+    } as any
+
+    const result = await handleSessionCallback({
+      chatKey: "123",
+      sessionPrefix: "nonexistent",
+      sdk,
+      sessionManager: sm,
+    })
+
+    expect(result).toBe("Session not found.")
   })
 })

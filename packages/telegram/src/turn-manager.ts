@@ -17,10 +17,12 @@ export type ActiveTurn = {
   toolSuffix: string
   timers: Set<ReturnType<typeof setTimeout>>
   draft: { stop(): void; getMessageId(): number | null; update(text: string): Promise<void> } | null
+  generation: number
 }
 
 export class TurnManager {
   private active = new Map<string, ActiveTurn>()
+  private generationCounter = 0
 
   start(sessionId: string, chatId: number): ActiveTurn {
     // If there's an existing turn, end it first
@@ -28,6 +30,8 @@ export class TurnManager {
     if (existing) {
       this.endTurn(existing)
     }
+
+    this.generationCounter++
 
     const turn: ActiveTurn = {
       sessionId,
@@ -37,6 +41,7 @@ export class TurnManager {
       toolSuffix: "",
       timers: new Set(),
       draft: null,
+      generation: this.generationCounter,
     }
 
     this.active.set(sessionId, turn)

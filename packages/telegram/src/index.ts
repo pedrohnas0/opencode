@@ -52,6 +52,14 @@ const pendingRequests = new PendingRequests({
   ttlMs: 10 * 60 * 1000, // 10 minutes
 })
 
+// --- Restore sessions from previous bot runs ---
+try {
+  const restored = await sessionManager.restore(sdk)
+  if (restored > 0) console.log(`Restored ${restored} sessions`)
+} catch (err) {
+  console.error("Session restore failed:", err)
+}
+
 // --- Create bot with deps ---
 const bot = createBot(config, { sdk, sessionManager, turnManager, pendingRequests })
 
@@ -248,6 +256,24 @@ const shutdown = async () => {
 
 process.on("SIGINT", shutdown)
 process.on("SIGTERM", shutdown)
+
+// --- Register Telegram command menu ---
+try {
+  await bot.api.setMyCommands([
+    { command: "start", description: "Welcome message" },
+    { command: "new", description: "New session" },
+    { command: "cancel", description: "Stop generation" },
+    { command: "list", description: "List sessions" },
+    { command: "rename", description: "Rename session" },
+    { command: "delete", description: "Delete session" },
+    { command: "info", description: "Session info" },
+    { command: "history", description: "Recent messages" },
+    { command: "summarize", description: "Summarize session" },
+  ])
+  console.log("Command menu registered")
+} catch (err) {
+  console.error("Failed to register commands:", err)
+}
 
 // --- Start polling ---
 await bot.start({

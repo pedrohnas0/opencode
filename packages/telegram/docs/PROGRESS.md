@@ -263,7 +263,65 @@ e2e/
 
 ---
 
-## Phase 4 — Session Management 🔜
+## Phase 4 — Session Management + Hardening ✅
 
-**Status:** Next up
-**Plan:** See `docs/spec.md` Section 9
+**Status:** Complete
+**Date:** 2026-02-08
+**Plan:** See `docs/plans/phase-4.md`
+
+### Delivered
+- **Allowlist middleware (N1)** — `TELEGRAM_ALLOWED_USERS` env var restricts bot access to specific Telegram user IDs. Grammy middleware at top of stack silently ignores non-allowed users. Empty list = accept all.
+- **Streaming interruption fix (N2)** — `sdk.session.abort()` called before starting new turn when existing turn is active. Prevents stale SSE events from corrupting new turns. Generation counter as safety net.
+- **Session restore on restart (N3)** — On startup, `sessionManager.restore(sdk)` pre-populates SessionManager with sessions matching "Telegram {chatId}" title pattern.
+- **Telegram command menu (N4)** — `bot.api.setMyCommands()` registers 9 commands in Telegram's "/" autocomplete menu.
+- **`/list`** — Shows sessions with inline keyboard, click `sess:` callback to switch.
+- **`/rename <title>`** — Renames current session via `sdk.session.update()`.
+- **`/delete`** — Deletes current session via `sdk.session.delete()` + removes SessionManager mapping.
+- **`/info`** — Shows session info (title, directory, created, updated).
+- **`/history`** — Shows last 10 messages (role: truncated text).
+- **`/summarize`** — Returns guidance message (avoids requiring model selection).
+- **`handleSessionCallback`** — Switches session via prefix matching on `session.list()`.
+
+### Tests
+| Type | Count | Status |
+|------|-------|--------|
+| Unit (bun test src/) | 184 | ✅ all pass |
+| E2E Phase 0 (regression) | 2 | ✅ all pass |
+| E2E Phase 1 (regression) | 3 | ✅ all pass |
+| E2E Phase 2 (regression) | 3 | ✅ all pass |
+| E2E Phase 3 (regression) | 4 | ✅ all pass |
+| E2E Phase 4 | 5 | ✅ all pass |
+
+### Files Created
+```
+src/
+  handlers/
+    allowlist.ts                   ← Grammy middleware factory
+    allowlist.test.ts              ← 6 tests
+    sessions.ts                    ← Session command handlers + formatting
+    sessions.test.ts               ← 26 tests
+e2e/
+  phase-4.test.ts                  ← 5 E2E tests
+```
+
+### Files Modified
+```
+src/
+  config.ts                        ← Added allowedUsers: number[] field
+  config.test.ts                   ← 3 new tests for allowedUsers parsing
+  turn-manager.ts                  ← Added generation counter to ActiveTurn
+  turn-manager.test.ts             ← 3 new tests for generation field
+  session-manager.ts               ← Added restore() method
+  session-manager.test.ts          ← 5 new tests for restore()
+  bot.ts                           ← Allowlist middleware, 6 new commands, sess: callback,
+                                      sdk.session.abort() before new turn, handleSessionCallback
+  bot.test.ts                      ← 4 new tests (abort behavior, session callback)
+  index.ts                         ← Session restore on startup, setMyCommands registration
+e2e/
+  phase-3.test.ts                  ← Fixed flaky streaming assertion
+```
+
+### Lessons Learned
+- `sdk.session.abort()` is fire-and-forget — errors logged but don't block new turn
+- Phase 3 streaming E2E was flaky: finalizeResponse can shorten text (strips tool suffix), so assert "same message ID + has content" instead of "text grew"
+- `sdk.session.summarize()` requires providerID + modelID — simpler to guide users to ask the AI directly

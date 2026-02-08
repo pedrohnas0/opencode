@@ -105,6 +105,29 @@ export class SessionManager {
     }
   }
 
+  async restore(sdk: OpencodeClient): Promise<number> {
+    const result = await sdk.session.list()
+    const sessions = (result as any).data ?? []
+    let restored = 0
+
+    for (const session of sessions) {
+      if (session.time?.archived) continue
+      const match = session.title?.match(/^Telegram (\d+)$/)
+      if (!match) continue
+
+      const chatKey = match[1]
+      if (!this.get(chatKey)) {
+        this.set(chatKey, {
+          sessionId: session.id,
+          directory: session.directory ?? "",
+        })
+        restored++
+      }
+    }
+
+    return restored
+  }
+
   cleanup(): void {
     const now = Date.now()
     for (const [chatKey, entry] of this.map) {

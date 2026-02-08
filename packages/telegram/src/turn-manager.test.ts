@@ -133,4 +133,23 @@ describe("TurnManager", () => {
     tm.end("s1")
     expect(stopFn).toHaveBeenCalledTimes(1)
   })
+
+  // --- Phase 4: generation counter ---
+
+  test("first turn gets generation=1", () => {
+    const turn = tm.start("s1", 12345)
+    expect(turn.generation).toBe(1)
+  })
+
+  test("second turn for same session gets incremented generation", () => {
+    const t1 = tm.start("s1", 12345)
+    const t2 = tm.start("s1", 12345)
+    expect(t2.generation).toBe(t1.generation + 1)
+  })
+
+  test("different sessions get unique generation values", () => {
+    const t1 = tm.start("s1", 111)
+    const t2 = tm.start("s2", 222)
+    expect(t1.generation).not.toBe(t2.generation)
+  })
 })

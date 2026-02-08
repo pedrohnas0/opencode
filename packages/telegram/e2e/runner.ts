@@ -56,7 +56,7 @@ export async function setup(): Promise<void> {
   const projectDir = process.env.OPENCODE_DIRECTORY ?? resolve(packageDir, "../../..")
   botProcess = spawn([process.execPath, "run", "src/index.ts"], {
     cwd: packageDir,
-    env: { ...process.env, OPENCODE_URL: serverUrl, OPENCODE_DIRECTORY: projectDir },
+    env: { ...process.env, OPENCODE_URL: serverUrl, OPENCODE_DIRECTORY: projectDir, TELEGRAM_ALLOWED_USERS: "*" },
     stdout: "pipe",
     stderr: "pipe",
   })

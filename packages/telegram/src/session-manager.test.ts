@@ -127,4 +127,72 @@ describe("SessionManager", () => {
     sm.remove("chat:1")
     expect(sm.size).toBe(1)
   })
+
+  // --- Phase 4: restore() ---
+
+  function createRestoreSdk(sessions: Array<{ id: string; title: string; directory?: string; archived?: number }>) {
+    return {
+      session: {
+        create: mock(async () => ({ data: { id: "new", title: "", directory: "/tmp" } })),
+        list: mock(async () => ({
+          data: sessions.map((s) => ({
+            id: s.id,
+            title: s.title,
+            directory: s.directory ?? "/tmp",
+            time: { created: 1000, updated: 2000, archived: s.archived },
+          })),
+        })),
+      },
+    }
+  }
+
+  test("restore populates sessions matching 'Telegram {chatId}' pattern", async () => {
+    const sdk = createRestoreSdk([
+      { id: "s1", title: "Telegram 12345" },
+      { id: "s2", title: "Telegram 67890" },
+    ])
+    const count = await sm.restore(sdk as any)
+    expect(count).toBe(2)
+    expect(sm.get("12345")?.sessionId).toBe("s1")
+    expect(sm.get("67890")?.sessionId).toBe("s2")
+  })
+
+  test("restore ignores archived sessions", async () => {
+    const sdk = createRestoreSdk([
+      { id: "s1", title: "Telegram 12345", archived: 9999 },
+    ])
+    const count = await sm.restore(sdk as any)
+    expect(count).toBe(0)
+    expect(sm.get("12345")).toBeUndefined()
+  })
+
+  test("restore ignores sessions without matching title pattern", async () => {
+    const sdk = createRestoreSdk([
+      { id: "s1", title: "My Custom Session" },
+      { id: "s2", title: "Telegram chat" },
+      { id: "s3", title: "Telegram12345" },
+    ])
+    const count = await sm.restore(sdk as any)
+    expect(count).toBe(0)
+  })
+
+  test("restore returns count of restored sessions", async () => {
+    const sdk = createRestoreSdk([
+      { id: "s1", title: "Telegram 111" },
+      { id: "s2", title: "Not matching" },
+      { id: "s3", title: "Telegram 333" },
+    ])
+    const count = await sm.restore(sdk as any)
+    expect(count).toBe(2)
+  })
+
+  test("restore does not overwrite existing mappings", async () => {
+    sm.set("12345", { sessionId: "existing", directory: "/existing" })
+    const sdk = createRestoreSdk([
+      { id: "s1", title: "Telegram 12345" },
+    ])
+    const count = await sm.restore(sdk as any)
+    expect(count).toBe(0)
+    expect(sm.get("12345")?.sessionId).toBe("existing")
+  })
 })

@@ -85,4 +85,46 @@ describe("loadConfig", () => {
     expect(config.e2e.session).toBe("session123")
     expect(config.e2e.botUsername).toBe("test_bot")
   })
+
+  test("parses TELEGRAM_ALLOWED_USERS as number array", async () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123:ABC"
+    process.env.TELEGRAM_ALLOWED_USERS = "111,222,333"
+    const { loadConfig } = await import("./config?allow1")
+    const config = loadConfig()
+    expect(config.allowedUsers).toEqual([111, 222, 333])
+  })
+
+  test("defaults allowedUsers to empty array when not set", async () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123:ABC"
+    delete process.env.TELEGRAM_ALLOWED_USERS
+    const { loadConfig } = await import("./config?allow2")
+    const config = loadConfig()
+    expect(config.allowedUsers).toEqual([])
+  })
+
+  test("defaults allowedUsers to empty array when empty string", async () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123:ABC"
+    process.env.TELEGRAM_ALLOWED_USERS = ""
+    const { loadConfig } = await import("./config?allow3")
+    const config = loadConfig()
+    expect(config.allowedUsers).toEqual([])
+    expect(config.allowAllUsers).toBe(false)
+  })
+
+  test("TELEGRAM_ALLOWED_USERS='*' sets allowAllUsers=true", async () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123:ABC"
+    process.env.TELEGRAM_ALLOWED_USERS = "*"
+    const { loadConfig } = await import("./config?allow4")
+    const config = loadConfig()
+    expect(config.allowAllUsers).toBe(true)
+    expect(config.allowedUsers).toEqual([])
+  })
+
+  test("allowAllUsers defaults to false when not set", async () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123:ABC"
+    delete process.env.TELEGRAM_ALLOWED_USERS
+    const { loadConfig } = await import("./config?allow5")
+    const config = loadConfig()
+    expect(config.allowAllUsers).toBe(false)
+  })
 })
