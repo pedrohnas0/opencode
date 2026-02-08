@@ -269,6 +269,8 @@ try {
     { command: "info", description: "Session info" },
     { command: "history", description: "Recent messages" },
     { command: "summarize", description: "Summarize session" },
+    { command: "model", description: "Select model" },
+    { command: "agent", description: "Select agent" },
   ])
   console.log("Command menu registered")
 } catch (err) {

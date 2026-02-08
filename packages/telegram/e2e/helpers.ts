@@ -107,6 +107,40 @@ export function assertContains(msg: Api.Message, pattern: string | RegExp): void
 }
 
 /**
+ * Click an inline button, then wait for the message to be edited.
+ * Returns the updated message after edit.
+ */
+export async function clickAndWaitEdit(
+  client: TelegramClient,
+  botUsername: string,
+  msgId: number,
+  buttonText: string,
+  timeoutMs = 10000,
+): Promise<Api.Message> {
+  // Capture the message text before clicking
+  const before = await client.getMessages(botUsername, { ids: [msgId] })
+  const textBefore = before[0]?.text ?? before[0]?.message ?? ""
+
+  await clickInlineButton(client, botUsername, msgId, buttonText)
+
+  // Poll until the message text changes (bot edited it)
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    await sleep(1500)
+    const messages = await client.getMessages(botUsername, { ids: [msgId] })
+    const msg = messages[0]
+    const textNow = msg?.text ?? msg?.message ?? ""
+    if (textNow !== textBefore) {
+      return msg!
+    }
+  }
+
+  // Return whatever the message is — it may have been edited to same-looking text
+  const final = await client.getMessages(botUsername, { ids: [msgId] })
+  return final[0]!
+}
+
+/**
  * Assert that a message has inline keyboard buttons.
  */
 export function assertHasButtons(msg: Api.Message): void {

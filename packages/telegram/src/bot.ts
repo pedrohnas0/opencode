@@ -31,6 +31,18 @@ import {
   handleSummarize,
   parseSessionCallback,
 } from "./handlers/sessions"
+import {
+  handleModel,
+  handleModelSelect,
+  parseModelCallback,
+  formatProviderList,
+  formatModelList,
+} from "./handlers/models"
+import {
+  handleAgent,
+  handleAgentSelect,
+  parseAgentCallback,
+} from "./handlers/agents"
 
 export const START_MESSAGE = [
   "OpenCode Telegram Bot",
@@ -100,6 +112,18 @@ export function createBot(config: Config, deps?: BotDeps) {
       const chatKey = String(ctx.chat.id)
       const result = await handleSummarize({ chatKey, sdk, sessionManager })
       await ctx.reply(result)
+    })
+
+    bot.command("model", async (ctx) => {
+      const chatKey = String(ctx.chat.id)
+      const result = await handleModel({ sdk, sessionManager, chatKey })
+      await ctx.reply(result.text, { reply_markup: result.reply_markup })
+    })
+
+    bot.command("agent", async (ctx) => {
+      const chatKey = String(ctx.chat.id)
+      const result = await handleAgent({ sdk, sessionManager, chatKey })
+      await ctx.reply(result.text, { reply_markup: result.reply_markup })
     })
 
     bot.command("cancel", async (ctx) => {
@@ -179,6 +203,77 @@ export function createBot(config: Config, deps?: BotDeps) {
         await ctx.editMessageText(result)
         return
       }
+
+      if (data.startsWith("mdl:")) {
+        const parsed = parseModelCallback(data)
+        if (!parsed) return
+        const chatKey = String(ctx.from.id)
+
+        if (parsed.type === "reset") {
+          const entry = sessionManager.get(chatKey)
+          if (entry) {
+            sessionManager.set(chatKey, { ...entry, modelOverride: undefined })
+          }
+          await ctx.editMessageText("Model reset to default.")
+          return
+        }
+
+        if (parsed.type === "back") {
+          const result = await handleModel({ sdk, sessionManager, chatKey })
+          await ctx.editMessageText(result.text, { reply_markup: result.reply_markup })
+          return
+        }
+
+        if (parsed.type === "provider") {
+          const provResult = await sdk.provider.list()
+          const providers = (provResult as any).data?.all ?? []
+          const provider = providers.find((p: any) => p.id === parsed.providerID)
+          if (!provider) {
+            await ctx.editMessageText("Provider not found.")
+            return
+          }
+          const models = Object.values(provider.models ?? {}) as any[]
+          const result = formatModelList(parsed.providerID, provider.name || parsed.providerID, models)
+          await ctx.editMessageText(result.text, { reply_markup: result.reply_markup })
+          return
+        }
+
+        if (parsed.type === "model") {
+          const result = await handleModelSelect({
+            chatKey,
+            providerID: parsed.providerID,
+            modelID: parsed.modelID,
+            sessionManager,
+          })
+          await ctx.editMessageText(result)
+          return
+        }
+      }
+
+      if (data.startsWith("agt:")) {
+        const parsed = parseAgentCallback(data)
+        if (!parsed) return
+        const chatKey = String(ctx.from.id)
+
+        if ("action" in parsed && parsed.action === "reset") {
+          const entry = sessionManager.get(chatKey)
+          if (entry) {
+            sessionManager.set(chatKey, { ...entry, agentOverride: undefined })
+          }
+          await ctx.editMessageText("Agent reset to default.")
+          return
+        }
+
+        if ("name" in parsed) {
+          const result = await handleAgentSelect({
+            chatKey,
+            agentName: parsed.name,
+            sessionManager,
+          })
+          await ctx.editMessageText(result)
+          return
+        }
+      }
     })
 
     bot.on("message:text", async (ctx) => {
@@ -251,6 +346,8 @@ export async function handleMessage(params: {
   sdk.session.prompt({
     sessionID: entry.sessionId,
     parts: [{ type: "text", text }],
+    ...(entry.modelOverride && { model: entry.modelOverride }),
+    ...(entry.agentOverride && { agent: entry.agentOverride }),
   }).catch((err: unknown) => {
     console.error("Prompt error:", err)
   })

@@ -15,6 +15,8 @@ export type SessionEntry = {
   directory: string
   createdAt: number
   lastAccessAt: number
+  modelOverride?: { providerID: string; modelID: string }
+  agentOverride?: string
 }
 
 export type SessionManagerOptions = {
@@ -79,7 +81,12 @@ export class SessionManager {
 
   set(
     chatKey: string,
-    init: { sessionId: string; directory: string },
+    init: {
+      sessionId: string
+      directory: string
+      modelOverride?: { providerID: string; modelID: string }
+      agentOverride?: string
+    },
   ): void {
     // Clean up old binding if exists
     const old = this.map.get(chatKey)
@@ -92,6 +99,8 @@ export class SessionManager {
       directory: init.directory,
       createdAt: Date.now(),
       lastAccessAt: Date.now(),
+      modelOverride: init.modelOverride,
+      agentOverride: init.agentOverride,
     }
 
     this.insert(chatKey, entry)

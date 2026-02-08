@@ -299,3 +299,134 @@ describe("handleSessionCallback", () => {
     expect(result).toBe("Session not found.")
   })
 })
+
+// --- Phase 5: model/agent override passing ---
+
+describe("handleMessage — model/agent overrides", () => {
+  test("passes modelOverride to sdk.session.prompt when set", async () => {
+    const { handleMessage } = await import("./bot")
+    const promptMock = mock(async () => ({ data: {} }))
+    const sm = new SessionManager({ maxEntries: 10, ttlMs: 60000 })
+    const tm = new TurnManager()
+
+    sm.set("123", {
+      sessionId: "s1",
+      directory: "/tmp",
+      modelOverride: { providerID: "anthropic", modelID: "claude-opus" },
+    })
+    const sdk = {
+      session: {
+        prompt: promptMock,
+        create: mock(async () => ({ data: { id: "s1" } })),
+        abort: mock(async () => ({})),
+      },
+    } as any
+
+    await handleMessage({
+      chatId: 123,
+      text: "hello",
+      sdk,
+      sessionManager: sm,
+      turnManager: tm,
+    })
+
+    await new Promise((r) => setTimeout(r, 10))
+    const call = promptMock.mock.calls[0]![0] as any
+    expect(call.model).toEqual({ providerID: "anthropic", modelID: "claude-opus" })
+  })
+
+  test("passes agentOverride to sdk.session.prompt when set", async () => {
+    const { handleMessage } = await import("./bot")
+    const promptMock = mock(async () => ({ data: {} }))
+    const sm = new SessionManager({ maxEntries: 10, ttlMs: 60000 })
+    const tm = new TurnManager()
+
+    sm.set("123", {
+      sessionId: "s1",
+      directory: "/tmp",
+      agentOverride: "code",
+    })
+    const sdk = {
+      session: {
+        prompt: promptMock,
+        create: mock(async () => ({ data: { id: "s1" } })),
+        abort: mock(async () => ({})),
+      },
+    } as any
+
+    await handleMessage({
+      chatId: 123,
+      text: "hello",
+      sdk,
+      sessionManager: sm,
+      turnManager: tm,
+    })
+
+    await new Promise((r) => setTimeout(r, 10))
+    const call = promptMock.mock.calls[0]![0] as any
+    expect(call.agent).toBe("code")
+  })
+
+  test("does NOT pass model/agent when overrides not set", async () => {
+    const { handleMessage } = await import("./bot")
+    const promptMock = mock(async () => ({ data: {} }))
+    const sm = new SessionManager({ maxEntries: 10, ttlMs: 60000 })
+    const tm = new TurnManager()
+
+    sm.set("123", { sessionId: "s1", directory: "/tmp" })
+    const sdk = {
+      session: {
+        prompt: promptMock,
+        create: mock(async () => ({ data: { id: "s1" } })),
+        abort: mock(async () => ({})),
+      },
+    } as any
+
+    await handleMessage({
+      chatId: 123,
+      text: "hello",
+      sdk,
+      sessionManager: sm,
+      turnManager: tm,
+    })
+
+    await new Promise((r) => setTimeout(r, 10))
+    const call = promptMock.mock.calls[0]![0] as any
+    expect(call.model).toBeUndefined()
+    expect(call.agent).toBeUndefined()
+  })
+
+  test("passes both overrides simultaneously", async () => {
+    const { handleMessage } = await import("./bot")
+    const promptMock = mock(async () => ({ data: {} }))
+    const sm = new SessionManager({ maxEntries: 10, ttlMs: 60000 })
+    const tm = new TurnManager()
+
+    sm.set("123", {
+      sessionId: "s1",
+      directory: "/tmp",
+      modelOverride: { providerID: "openai", modelID: "gpt-4o" },
+      agentOverride: "build",
+    })
+    const sdk = {
+      session: {
+        prompt: promptMock,
+        create: mock(async () => ({ data: { id: "s1" } })),
+        abort: mock(async () => ({})),
+      },
+    } as any
+
+    await handleMessage({
+      chatId: 123,
+      text: "hello",
+      sdk,
+      sessionManager: sm,
+      turnManager: tm,
+    })
+
+    await new Promise((r) => setTimeout(r, 10))
+    const call = promptMock.mock.calls[0]![0] as any
+    expect(call.model).toEqual({ providerID: "openai", modelID: "gpt-4o" })
+    expect(call.agent).toBe("build")
+  })
+})

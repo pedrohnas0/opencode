@@ -196,3 +196,49 @@ describe("SessionManager", () => {
     expect(sm.get("12345")?.sessionId).toBe("existing")
   })
 })
+
+// --- Phase 5: model/agent override fields ---
+
+describe("SessionEntry overrides", () => {
+  let sm: SessionManager
+
+  beforeEach(() => {
+    sm = new SessionManager({ maxEntries: 10, ttlMs: 60000 })
+  })
+
+  test("set/get preserves modelOverride", () => {
+    sm.set("123", {
+      sessionId: "s1",
+      directory: "/tmp",
+      modelOverride: { providerID: "anthropic", modelID: "claude-sonnet-4-5-20250929" },
+    })
+    const entry = sm.get("123")
+    expect(entry?.modelOverride).toEqual({
+      providerID: "anthropic",
+      modelID: "claude-sonnet-4-5-20250929",
+    })
+  })
+
+  test("set/get preserves agentOverride", () => {
+    sm.set("123", {
+      sessionId: "s1",
+      directory: "/tmp",
+      agentOverride: "code",
+    })
+    const entry = sm.get("123")
+    expect(entry?.agentOverride).toBe("code")
+  })
+
+  test("getOrCreate returns entry without overrides by default", async () => {
+    const sdk = {
+      session: {
+        create: mock(async () => ({
+          data: { id: "new-session", title: "", directory: "/tmp" },
+        })),
+      },
+    }
+    const entry = await sm.getOrCreate("456", sdk as any)
+    expect(entry.modelOverride).toBeUndefined()
+    expect(entry.agentOverride).toBeUndefined()
+  })
+})
