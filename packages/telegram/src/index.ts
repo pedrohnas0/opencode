@@ -19,6 +19,8 @@ import { markdownToTelegramHtml } from "./send/format"
 import { chunkMessage } from "./send/chunker"
 import { formatPermissionMessage } from "./handlers/permissions"
 import { formatQuestionMessage } from "./handlers/questions"
+import { formatToolStatus } from "./send/tool-progress"
+import type { ActiveTurn } from "./turn-manager"
 
 const config = loadConfig()
 
@@ -74,6 +76,57 @@ async function sendFormattedResponse(chatId: number, markdown: string) {
   }
 }
 
+// --- Finalize response (draft stream → final formatted message) ---
+async function finalizeResponse(chatId: number, turn: ActiveTurn) {
+  turn.draft?.stop()
+  const text = turn.accumulatedText
+  if (!text) return
+
+  const draftMsgId = turn.draft?.getMessageId() ?? null
+  const html = markdownToTelegramHtml(text)
+  const chunks = chunkMessage(html)
+
+  if (chunks.length === 1 && draftMsgId) {
+    // Single chunk — edit draft to final version
+    try {
+      await bot.api.editMessageText(chatId, draftMsgId, html, {
+        parse_mode: "HTML",
+      })
+    } catch (err) {
+      const msg = String(err)
+      if (/message is not modified/i.test(msg)) return
+      if (/can't parse entities/i.test(msg)) {
+        try {
+          await bot.api.editMessageText(
+            chatId,
+            draftMsgId,
+            text.slice(0, 4096),
+          )
+        } catch {
+          // Give up editing — send as new message
+          await sendFormattedResponse(chatId, text)
+        }
+        return
+      }
+      if (
+        /message to edit not found/i.test(msg) ||
+        /MESSAGE_ID_INVALID/i.test(msg)
+      ) {
+        await sendFormattedResponse(chatId, text)
+        return
+      }
+      throw err
+    }
+  } else if (draftMsgId) {
+    // Multiple chunks — delete draft and send all
+    await bot.api.deleteMessage(chatId, draftMsgId).catch(() => {})
+    await sendFormattedResponse(chatId, text)
+  } else {
+    // No draft was ever sent — send normally
+    await sendFormattedResponse(chatId, text)
+  }
+}
+
 // --- EventBus: route SSE events → Telegram ---
 const eventBus = new EventBus({
   sdk,
@@ -84,11 +137,27 @@ const eventBus = new EventBus({
     switch (event.type) {
       case "message.part.updated": {
         const part = event.properties.part
+        const turn = turnManager.get(sessionId)
+        if (!turn) break
+
         if (part.type === "text") {
           // Replace accumulated text (SDK sends full text, not deltas)
-          const turn = turnManager.get(sessionId)
-          if (turn) {
-            turn.accumulatedText = part.text
+          turn.accumulatedText = part.text
+          turn.toolSuffix = ""
+          turn.draft?.update(part.text).catch((err: unknown) =>
+            console.error("Draft update error:", err),
+          )
+        } else if (part.type === "tool") {
+          const suffix = formatToolStatus(part)
+          if (suffix) {
+            turn.toolSuffix = suffix
+            if (turn.accumulatedText) {
+              turn.draft
+                ?.update(turn.accumulatedText + suffix)
+                .catch((err: unknown) =>
+                  console.error("Draft tool update error:", err),
+                )
+            }
           }
         }
         break
@@ -96,9 +165,9 @@ const eventBus = new EventBus({
 
       case "session.idle": {
         const turn = turnManager.get(sessionId)
-        if (turn && turn.accumulatedText) {
-          sendFormattedResponse(chatId, turn.accumulatedText).catch((err) => {
-            console.error("Error sending response:", err)
+        if (turn) {
+          finalizeResponse(chatId, turn).catch((err) => {
+            console.error("Error finalizing response:", err)
           })
         }
         turnManager.end(sessionId)

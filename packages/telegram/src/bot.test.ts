@@ -61,6 +61,9 @@ describe("handleMessage", () => {
       turnManager: tm,
     })
 
+    // Prompt is fire-and-forget — wait a microtick for the promise to resolve
+    await new Promise((r) => setTimeout(r, 10))
+
     expect(promptMock).toHaveBeenCalledTimes(1)
     const call = promptMock.mock.calls[0][0]
     expect(call.path.id).toBe("s1")
@@ -88,6 +91,9 @@ describe("handleMessage", () => {
       sessionManager: sm,
       turnManager: tm,
     })
+
+    // Wait for fire-and-forget prompt
+    await new Promise((r) => setTimeout(r, 10))
 
     // Should have created a session
     expect(createMock).toHaveBeenCalledTimes(1)

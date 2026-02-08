@@ -14,7 +14,9 @@ export type ActiveTurn = {
   chatId: number
   abortController: AbortController
   accumulatedText: string
+  toolSuffix: string
   timers: Set<ReturnType<typeof setTimeout>>
+  draft: { stop(): void; getMessageId(): number | null } | null
 }
 
 export class TurnManager {
@@ -32,7 +34,9 @@ export class TurnManager {
       chatId,
       abortController: new AbortController(),
       accumulatedText: "",
+      toolSuffix: "",
       timers: new Set(),
+      draft: null,
     }
 
     this.active.set(sessionId, turn)
@@ -70,6 +74,8 @@ export class TurnManager {
   }
 
   private endTurn(turn: ActiveTurn): void {
+    // Stop draft stream if active
+    turn.draft?.stop()
     // Abort all listeners registered with this signal
     turn.abortController.abort()
     // Clear all tracked timers

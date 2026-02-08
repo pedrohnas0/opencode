@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from "bun:test"
+import { describe, test, expect, beforeEach, mock } from "bun:test"
 import { TurnManager } from "./turn-manager"
 
 describe("TurnManager", () => {
@@ -109,5 +109,28 @@ describe("TurnManager", () => {
     expect(tm.size).toBe(2)
     tm.end("s1")
     expect(tm.size).toBe(1)
+  })
+
+  // --- Phase 3: draft + toolSuffix fields ---
+
+  test("new turn has toolSuffix='' and draft=null", () => {
+    const turn = tm.start("s1", 12345)
+    expect(turn.toolSuffix).toBe("")
+    expect(turn.draft).toBeNull()
+  })
+
+  test("draft can be set on turn and accessed", () => {
+    const turn = tm.start("s1", 12345)
+    const fakeDraft = { stop: mock(() => {}), getMessageId: () => 42 }
+    turn.draft = fakeDraft
+    expect(tm.get("s1")!.draft).toBe(fakeDraft)
+  })
+
+  test("end calls draft.stop() if draft exists", () => {
+    const turn = tm.start("s1", 12345)
+    const stopFn = mock(() => {})
+    turn.draft = { stop: stopFn, getMessageId: () => 42 }
+    tm.end("s1")
+    expect(stopFn).toHaveBeenCalledTimes(1)
   })
 })

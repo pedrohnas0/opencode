@@ -202,7 +202,68 @@ e2e/
 
 ---
 
-## Phase 3 — Streaming + UX 🔜
+## Phase 3 — Streaming + UX ✅
+
+**Status:** Complete
+**Date:** 2026-02-08
+
+### Delivered
+- **DraftStream** (`send/draft-stream.ts`): Sends initial message on first text part, then edits it as text streams in. Throttled at 400ms, HTML with plain-text fallback, auto-stop via AbortSignal.
+- **Tool progress** (`send/tool-progress.ts`): Appends `⚙ Running tool: title` suffix to draft during tool execution. Cleared on next text update.
+- **Final response** (`finalizeResponse` in `index.ts`): On `session.idle`, stops draft and either edits to final HTML (single chunk) or deletes draft and sends chunked messages (>4096 chars).
+- **Fire-and-forget prompt** (`bot.ts`): `sdk.session.prompt()` no longer blocks the Grammy handler — the DraftStream is created before the prompt fires, so SSE events can update the draft immediately.
+- **E2E project directory** (`runner.ts`): Bot now uses `/home/pedro/dev/` as OPENCODE_DIRECTORY (configurable via env), pointing to the workspace with Opus configured.
+
+### Tests
+| Type | Count | Status |
+|------|-------|--------|
+| Unit (bun test src/) | 137 | ✅ all pass |
+| E2E Phase 0 (regression) | 2 | ✅ all pass |
+| E2E Phase 1 (regression) | 3 | ✅ all pass |
+| E2E Phase 2 (regression) | 3 | ✅ all pass |
+| E2E Phase 3 | 4 | ✅ all pass |
+
+### Files Created
+```
+src/
+  send/
+    draft-stream.ts                ← DraftStream class (throttled message editing)
+    draft-stream.test.ts           ← 18 tests
+    tool-progress.ts               ← formatToolStatus() pure function
+    tool-progress.test.ts          ← 8 tests
+e2e/
+  phase-3.test.ts                  ← 4 E2E tests (streaming, tool progress, 2 regression)
+```
+
+### Files Modified
+```
+src/
+  turn-manager.ts                  ← Added toolSuffix + draft fields to ActiveTurn
+  turn-manager.test.ts             ← 3 new tests for new fields
+  bot.ts                           ← DraftStream created before prompt, fire-and-forget prompt,
+                                      draftDeps parameter for testability
+  bot.test.ts                      ← Updated for fire-and-forget prompt (microtick waits)
+  index.ts                         ← DraftStream updates on text/tool events, finalizeResponse
+                                      on session.idle, tool progress integration
+e2e/
+  runner.ts                        ← OPENCODE_DIRECTORY defaults to project root (/home/pedro/dev/)
+```
+
+### Key Design Decisions
+- **Fire-and-forget prompt**: `sdk.session.prompt()` was blocking Grammy's sequential handler — with Opus max, this could take minutes. Now it's fire-and-forget with `.catch()`, and the DraftStream is ready before any SSE events arrive.
+- **DraftStream dependency injection**: `DraftStreamDeps` abstracts `bot.api.sendMessage/editMessageText` for testability without Grammy mocks.
+- **Tool progress as suffix**: Tool status is appended to the draft text (not sent as separate messages), keeping the chat clean. Cleared when next text part arrives.
+- **Finalization logic**: Single-chunk → edit draft; multi-chunk → delete draft + send chunked; no draft → send normally.
+
+### Lessons Learned
+- `sdk.session.prompt()` blocks until the server responds — with slow models this blocks Grammy's entire update processing. Fire-and-forget is essential.
+- DraftStream must be created BEFORE the prompt call, not after — SSE events arrive immediately and need a target.
+- E2E tests with different model configs (Opus system prompt in Portuguese) may respond differently — regression tests should assert "bot responded" not specific words.
+- Chaining E2E suites with `&&` can cause server port conflicts — run each suite isolated.
+
+---
+
+## Phase 4 — Session Management 🔜
 
 **Status:** Next up
-**Plan:** See `docs/spec.md` Section 7
+**Plan:** See `docs/spec.md` Section 9

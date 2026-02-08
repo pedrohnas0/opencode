@@ -52,9 +52,11 @@ export async function setup(): Promise<void> {
   console.log(`E2E: OpenCode server at ${serverUrl}`)
 
   // 2. Start bot with OPENCODE_URL pointing to our server
+  // Use /home/pedro/dev as project dir (has opencode.json with Opus configured)
+  const projectDir = process.env.OPENCODE_DIRECTORY ?? resolve(packageDir, "../../..")
   botProcess = spawn([process.execPath, "run", "src/index.ts"], {
     cwd: packageDir,
-    env: { ...process.env, OPENCODE_URL: serverUrl },
+    env: { ...process.env, OPENCODE_URL: serverUrl, OPENCODE_DIRECTORY: projectDir },
     stdout: "pipe",
     stderr: "pipe",
   })

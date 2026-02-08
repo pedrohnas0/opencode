@@ -20,6 +20,7 @@ import {
   resolveQuestionAnswer,
 } from "./handlers/questions"
 import { startTypingLoop } from "./handlers/typing"
+import { DraftStream } from "./send/draft-stream"
 
 export const START_MESSAGE = [
   "OpenCode Telegram Bot",
@@ -128,7 +129,13 @@ export function createBot(config: Config, deps?: BotDeps) {
         sdk,
         sessionManager,
         turnManager,
+        draftDeps: {
+          sendMessage: (id, t, o) => bot.api.sendMessage(id, t, o),
+          editMessageText: (id, m, t, o) =>
+            bot.api.editMessageText(id, m, t, o),
+        },
       })
+
       startTypingLoop(
         chatId,
         (id, action) => bot.api.sendChatAction(id, action),
@@ -152,18 +159,29 @@ export async function handleMessage(params: {
   sdk: OpencodeClient
   sessionManager: SessionManager
   turnManager: TurnManager
+  draftDeps?: import("./send/draft-stream").DraftStreamDeps
 }): Promise<{ turn: ActiveTurn }> {
-  const { chatId, text, sdk, sessionManager, turnManager } = params
+  const { chatId, text, sdk, sessionManager, turnManager, draftDeps } = params
   const chatKey = String(chatId)
 
   const entry = await sessionManager.getOrCreate(chatKey, sdk)
   const turn = turnManager.start(entry.sessionId, chatId)
 
-  await sdk.session.prompt({
+  // Attach draft stream BEFORE firing the prompt, so SSE events
+  // can update the draft immediately as they arrive.
+  if (draftDeps) {
+    turn.draft = new DraftStream(draftDeps, chatId, turn.abortController.signal)
+  }
+
+  // Fire-and-forget: don't block the Grammy handler.
+  // The response comes via SSE events → DraftStream → finalizeResponse.
+  sdk.session.prompt({
     path: { id: entry.sessionId },
     body: {
       parts: [{ type: "text", text }],
     },
+  }).catch((err) => {
+    console.error("Prompt error:", err)
   })
 
   return { turn }
