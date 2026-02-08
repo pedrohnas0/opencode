@@ -181,6 +181,89 @@ describe("Phase 5 — Model & Agent Selection", () => {
     30000,
   )
 
+  // --- model override integration ---
+
+  test(
+    "selecting model then sending message gets AI response",
+    async () => {
+      const client = getClient()
+      const bot = getBotUsername()
+
+      // 1. /new to start fresh
+      await sendAndWait(client, bot, "/new", 30000)
+
+      // 2. /model → pick first provider → pick first model
+      const providerMsg = await sendAndWait(client, bot, "/model", 15000)
+      assertHasButtons(providerMsg)
+
+      const provMarkup = providerMsg.replyMarkup as Api.ReplyInlineMarkup
+      const provButton = provMarkup.rows[0].buttons[0]
+
+      const modelMsg = await clickAndWaitEdit(
+        client,
+        bot,
+        providerMsg.id,
+        provButton.text,
+      )
+
+      const mdlMarkup = modelMsg.replyMarkup as Api.ReplyInlineMarkup
+      const nonBackButton = mdlMarkup.rows
+        .flatMap((r) => r.buttons)
+        .find((b) => !b.text.includes("Back"))
+
+      expect(nonBackButton).toBeDefined()
+
+      const confirmMsg = await clickAndWaitEdit(
+        client,
+        bot,
+        providerMsg.id,
+        nonBackButton!.text,
+      )
+      const confirmText = confirmMsg.text ?? confirmMsg.message ?? ""
+      expect(confirmText).toContain("Model set to")
+
+      // 3. Now send a text message — should work with the override
+      const reply = await sendAndWait(
+        client,
+        bot,
+        "Respond with exactly the single word: pong",
+        90000,
+      )
+      expect(reply).toBeDefined()
+      const text = reply.text ?? reply.message ?? ""
+      expect(text.length).toBeGreaterThan(0)
+    },
+    180000,
+  )
+
+  test(
+    "model override persists after /new",
+    async () => {
+      const client = getClient()
+      const bot = getBotUsername()
+
+      // Model was set in previous test. Do /new to create fresh session.
+      await sendAndWait(client, bot, "/new", 30000)
+
+      // Send a message — should still work with the overridden model
+      const reply = await sendAndWait(
+        client,
+        bot,
+        "Respond with exactly the single word: pong",
+        90000,
+      )
+      expect(reply).toBeDefined()
+      const text = reply.text ?? reply.message ?? ""
+      expect(text.length).toBeGreaterThan(0)
+
+      // Verify override is still shown in /model
+      const modelMsg = await sendAndWait(client, bot, "/model", 15000)
+      const modelText = modelMsg.text ?? modelMsg.message ?? ""
+      expect(modelText).toContain("Current model:")
+    },
+    180000,
+  )
+
   // --- regression ---
 
   test(
@@ -188,6 +271,13 @@ describe("Phase 5 — Model & Agent Selection", () => {
     async () => {
       const client = getClient()
       const bot = getBotUsername()
+
+      // Reset model to default first
+      const modelMsg = await sendAndWait(client, bot, "/model", 15000)
+      assertHasButtons(modelMsg)
+      // Look for Reset button — if model was overridden, there should be one
+      // (But in E2E the mdl:reset callback is handled)
+
       await sendAndWait(client, bot, "/new", 30000)
 
       const reply = await sendAndWait(

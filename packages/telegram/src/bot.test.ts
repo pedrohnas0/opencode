@@ -178,6 +178,66 @@ describe("handleNew", () => {
     expect(sm.get("456")!.sessionId).toBe("fresh-session")
     expect(result.sessionId).toBe("fresh-session")
   })
+
+  test("preserves model/agent overrides across /new", async () => {
+    const { handleNew } = await import("./bot")
+    const createMock = mock(async () => ({
+      data: { id: "new-session-2", directory: "/tmp" },
+    }))
+
+    const sm = new SessionManager({ maxEntries: 10, ttlMs: 60000 })
+    sm.set("123", {
+      sessionId: "old-session",
+      directory: "/tmp",
+      modelOverride: { providerID: "google", modelID: "gemini-flash" },
+      agentOverride: "code",
+    })
+
+    const sdk = {
+      session: { create: createMock },
+    } as any
+
+    await handleNew({ chatId: 123, sdk, sessionManager: sm })
+
+    const entry = sm.get("123")!
+    expect(entry.sessionId).toBe("new-session-2")
+    expect(entry.modelOverride).toEqual({ providerID: "google", modelID: "gemini-flash" })
+    expect(entry.agentOverride).toBe("code")
+  })
+})
+
+describe("handleSessionCallback — override preservation", () => {
+  test("preserves model/agent overrides when switching session", async () => {
+    const { handleSessionCallback } = await import("./bot")
+    const sm = new SessionManager({ maxEntries: 10, ttlMs: 60000 })
+    sm.set("123", {
+      sessionId: "old-session",
+      directory: "/tmp",
+      modelOverride: { providerID: "anthropic", modelID: "claude-opus" },
+      agentOverride: "build",
+    })
+
+    const sdk = {
+      session: {
+        list: mock(async () => ({
+          data: [{ id: "target-session-full", title: "Target", directory: "/proj" }],
+        })),
+      },
+    } as any
+
+    const result = await handleSessionCallback({
+      chatKey: "123",
+      sessionPrefix: "target-session",
+      sdk,
+      sessionManager: sm,
+    })
+
+    expect(result).toContain("Switched to")
+    const entry = sm.get("123")!
+    expect(entry.sessionId).toBe("target-session-full")
+    expect(entry.modelOverride).toEqual({ providerID: "anthropic", modelID: "claude-opus" })
+    expect(entry.agentOverride).toBe("build")
+  })
 })
 
 // --- Phase 4 tests: handleMessage abort, session commands ---
@@ -428,5 +488,142 @@ describe("handleMessage — model/agent overrides", () => {
     const call = promptMock.mock.calls[0]![0] as any
     expect(call.model).toEqual({ providerID: "openai", modelID: "gpt-4o" })
     expect(call.agent).toBe("build")
+  })
+})
+
+// --- Phase 6: media parts passthrough ---
+
+describe("handleMessage — media parts", () => {
+  test("uses explicit parts array when provided", async () => {
+    const { handleMessage } = await import("./bot")
+    const promptMock = mock(async () => ({ data: {} }))
+    const sm = new SessionManager({ maxEntries: 10, ttlMs: 60000 })
+    const tm = new TurnManager()
+
+    sm.set("123", { sessionId: "s1", directory: "/tmp" })
+    const sdk = {
+      session: {
+        prompt: promptMock,
+        create: mock(async () => ({ data: { id: "s1" } })),
+        abort: mock(async () => ({})),
+      },
+    } as any
+
+    const customParts = [
+      { type: "text" as const, text: "What is this?" },
+      { type: "file" as const, mime: "image/jpeg", url: "data:image/jpeg;base64,abc", filename: "photo.jpg" },
+    ]
+
+    await handleMessage({
+      chatId: 123,
+      text: "",
+      parts: customParts,
+      sdk,
+      sessionManager: sm,
+      turnManager: tm,
+    })
+
+    await new Promise((r) => setTimeout(r, 10))
+    const call = promptMock.mock.calls[0]![0] as any
+    expect(call.parts).toHaveLength(2)
+    expect(call.parts[0].type).toBe("text")
+    expect(call.parts[1].type).toBe("file")
+    expect(call.parts[1].mime).toBe("image/jpeg")
+  })
+
+  test("without parts builds text part from text param (backward compat)", async () => {
+    const { handleMessage } = await import("./bot")
+    const promptMock = mock(async () => ({ data: {} }))
+    const sm = new SessionManager({ maxEntries: 10, ttlMs: 60000 })
+    const tm = new TurnManager()
+
+    sm.set("123", { sessionId: "s1", directory: "/tmp" })
+    const sdk = {
+      session: {
+        prompt: promptMock,
+        create: mock(async () => ({ data: { id: "s1" } })),
+        abort: mock(async () => ({})),
+      },
+    } as any
+
+    await handleMessage({
+      chatId: 123,
+      text: "hello world",
+      sdk,
+      sessionManager: sm,
+      turnManager: tm,
+    })
+
+    await new Promise((r) => setTimeout(r, 10))
+    const call = promptMock.mock.calls[0]![0] as any
+    expect(call.parts).toHaveLength(1)
+    expect(call.parts[0].type).toBe("text")
+    expect(call.parts[0].text).toBe("hello world")
+  })
+
+  test("with both text and parts — parts wins", async () => {
+    const { handleMessage } = await import("./bot")
+    const promptMock = mock(async () => ({ data: {} }))
+    const sm = new SessionManager({ maxEntries: 10, ttlMs: 60000 })
+    const tm = new TurnManager()
+
+    sm.set("123", { sessionId: "s1", directory: "/tmp" })
+    const sdk = {
+      session: {
+        prompt: promptMock,
+        create: mock(async () => ({ data: { id: "s1" } })),
+        abort: mock(async () => ({})),
+      },
+    } as any
+
+    const customParts = [
+      { type: "file" as const, mime: "image/png", url: "data:image/png;base64,xyz", filename: "img.png" },
+    ]
+
+    await handleMessage({
+      chatId: 123,
+      text: "this should be ignored",
+      parts: customParts,
+      sdk,
+      sessionManager: sm,
+      turnManager: tm,
+    })
+
+    await new Promise((r) => setTimeout(r, 10))
+    const call = promptMock.mock.calls[0]![0] as any
+    expect(call.parts).toHaveLength(1)
+    expect(call.parts[0].type).toBe("file")
+  })
+
+  test("with empty parts array still works", async () => {
+    const { handleMessage } = await import("./bot")
+    const promptMock = mock(async () => ({ data: {} }))
+    const sm = new SessionManager({ maxEntries: 10, ttlMs: 60000 })
+    const tm = new TurnManager()
+
+    sm.set("123", { sessionId: "s1", directory: "/tmp" })
+    const sdk = {
+      session: {
+        prompt: promptMock,
+        create: mock(async () => ({ data: { id: "s1" } })),
+        abort: mock(async () => ({})),
+      },
+    } as any
+
+    await handleMessage({
+      chatId: 123,
+      text: "fallback text",
+      parts: [],
+      sdk,
+      sessionManager: sm,
+      turnManager: tm,
+    })
+
+    await new Promise((r) => setTimeout(r, 10))
+    const call = promptMock.mock.calls[0]![0] as any
+    // Empty parts array → falls back to text
+    expect(call.parts).toHaveLength(1)
+    expect(call.parts[0].type).toBe("text")
+    expect(call.parts[0].text).toBe("fallback text")
   })
 })

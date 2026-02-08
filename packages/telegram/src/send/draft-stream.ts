@@ -34,6 +34,7 @@ export class DraftStream {
   private pending = ""
   private timer: ReturnType<typeof setTimeout> | null = null
   private stopped = false
+  private sending = false
   private flushing = false
   private _htmlFailed = false
   readonly throttleMs: number
@@ -57,8 +58,13 @@ export class DraftStream {
     if (this.stopped || !text.trim()) return
     this.pending = text
 
+    // Guard: if already sending the initial message, just store pending and return.
+    // This prevents concurrent sendMessage calls when multiple SSE events arrive
+    // before the first sendMessage resolves (race condition with fast models).
+    if (this.sending) return
+
     if (this.messageId === null) {
-      // First update — send initial message
+      this.sending = true
       const truncated = text.slice(0, 4096)
       try {
         const html = markdownToTelegramHtml(truncated)
@@ -70,6 +76,12 @@ export class DraftStream {
         this.lastSentAt = Date.now()
       } catch {
         // sendMessage failed — messageId stays null
+      }
+      this.sending = false
+
+      // If pending changed while we were sending, schedule a flush
+      if (this.messageId !== null && this.pending.slice(0, 4096) !== this.lastText) {
+        this.scheduleFlush()
       }
       return
     }

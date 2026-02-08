@@ -43,6 +43,12 @@ import {
   handleAgentSelect,
   parseAgentCallback,
 } from "./handlers/agents"
+import {
+  extractFileRef,
+  downloadTelegramFile,
+  buildMediaParts,
+  getMimeFromFileName,
+} from "./handlers/media"
 
 export const START_MESSAGE = [
   "OpenCode Telegram Bot",
@@ -276,6 +282,66 @@ export function createBot(config: Config, deps?: BotDeps) {
       }
     })
 
+    // --- Media handlers (must come BEFORE message:text) ---
+    const handleMedia = async (ctx: any) => {
+      const chatId = ctx.chat.id
+      const msg = ctx.message
+      const ref = extractFileRef(msg)
+      if (!ref) return
+
+      try {
+        const downloaded = await downloadTelegramFile({
+          fileId: ref.fileId,
+          token: config.botToken,
+          getFile: (fid: string) => ctx.api.getFile(fid),
+          filename: ref.filename,
+          mime: ref.mime,
+        })
+
+        if (!downloaded) {
+          await ctx.reply("Could not download file. It may be too large (max 20MB).")
+          return
+        }
+
+        const parts = buildMediaParts({
+          buffer: downloaded.buffer,
+          mime: downloaded.mime,
+          filename: downloaded.filename,
+          caption: msg.caption,
+        })
+
+        const { turn } = await handleMessage({
+          chatId,
+          text: msg.caption ?? "",
+          parts,
+          sdk,
+          sessionManager,
+          turnManager,
+          draftDeps: {
+            sendMessage: (id, t, o) =>
+              bot.api.sendMessage(id, t, o as any),
+            editMessageText: (id, m, t, o) =>
+              bot.api.editMessageText(id, m, t, o as any),
+          },
+        })
+
+        startTypingLoop(
+          chatId,
+          (id, action) => bot.api.sendChatAction(id, action as any),
+          turn.abortController.signal,
+        )
+      } catch (err) {
+        console.error("Media handler error:", err)
+        await ctx.reply("Error processing file.").catch(() => {})
+      }
+    }
+
+    bot.on("message:photo", handleMedia)
+    bot.on("message:document", handleMedia)
+    bot.on("message:voice", handleMedia)
+    bot.on("message:audio", handleMedia)
+    bot.on("message:video", handleMedia)
+
     bot.on("message:text", async (ctx) => {
       const chatId = ctx.chat.id
       const text = ctx.message.text.trim()
@@ -315,6 +381,7 @@ export function createBot(config: Config, deps?: BotDeps) {
 export async function handleMessage(params: {
   chatId: number
   text: string
+  parts?: Array<{ type: string; [k: string]: unknown }>
   sdk: OpencodeClient
   sessionManager: SessionManager
   turnManager: TurnManager
@@ -341,11 +408,16 @@ export async function handleMessage(params: {
     turn.draft = new DraftStream(draftDeps, chatId, turn.abortController.signal)
   }
 
+  // Use explicit parts if provided and non-empty, otherwise build from text
+  const promptParts = (params.parts && params.parts.length > 0)
+    ? params.parts
+    : [{ type: "text" as const, text }]
+
   // Fire-and-forget: don't block the Grammy handler.
   // The response comes via SSE events → DraftStream → finalizeResponse.
   sdk.session.prompt({
     sessionID: entry.sessionId,
-    parts: [{ type: "text", text }],
+    parts: promptParts as any,
     ...(entry.modelOverride && { model: entry.modelOverride }),
     ...(entry.agentOverride && { agent: entry.agentOverride }),
   }).catch((err: unknown) => {
@@ -367,9 +439,14 @@ export async function handleSessionCallback(params: {
   const match = sessions.find((s: any) => s.id.startsWith(sessionPrefix))
   if (!match) return "Session not found."
 
+  // Preserve model/agent overrides across session switches
+  const oldEntry = sessionManager.get(chatKey)
+
   sessionManager.set(chatKey, {
     sessionId: match.id,
     directory: match.directory ?? "",
+    modelOverride: oldEntry?.modelOverride,
+    agentOverride: oldEntry?.agentOverride,
   })
   return `Switched to: ${match.title || match.id}`
 }
@@ -382,10 +459,21 @@ export async function handleNew(params: {
   const { chatId, sdk, sessionManager } = params
   const chatKey = String(chatId)
 
+  // Preserve model/agent overrides across session changes
+  const oldEntry = sessionManager.get(chatKey)
+  const modelOverride = oldEntry?.modelOverride
+  const agentOverride = oldEntry?.agentOverride
+
   // Remove existing session mapping (session persists on server)
   sessionManager.remove(chatKey)
 
   // Create fresh session
   const entry = await sessionManager.getOrCreate(chatKey, sdk)
+
+  // Restore overrides
+  if (modelOverride || agentOverride) {
+    sessionManager.set(chatKey, { ...entry, modelOverride, agentOverride })
+  }
+
   return entry
 }

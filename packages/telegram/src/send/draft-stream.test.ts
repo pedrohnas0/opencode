@@ -226,4 +226,80 @@ describe("DraftStream", () => {
     const ds = new DraftStream(deps, 123, ac.signal)
     expect(ds.isStopped()).toBe(true)
   })
+
+  // --- Race condition: concurrent updates before first sendMessage resolves ---
+
+  test("concurrent updates while first sendMessage is in-flight only send once", async () => {
+    // Simulate a slow sendMessage (e.g., network latency)
+    let resolveFirst: ((v: { message_id: number }) => void) | null = null
+    deps.sendMessage = mock(
+      () => new Promise<{ message_id: number }>((resolve) => { resolveFirst = resolve }),
+    )
+    const ds = new DraftStream(deps, 123, ac.signal, 50)
+
+    // Fire multiple concurrent updates — all see messageId === null
+    const p1 = ds.update("v1")
+    const p2 = ds.update("v2")
+    const p3 = ds.update("v3")
+
+    // Only ONE sendMessage call should have been made (the first)
+    expect(deps.sendMessage).toHaveBeenCalledTimes(1)
+
+    // Resolve the first sendMessage
+    resolveFirst!({ message_id: 42 })
+    await p1
+    await p2
+    await p3
+
+    // Still only one sendMessage call
+    expect(deps.sendMessage).toHaveBeenCalledTimes(1)
+    expect(ds.getMessageId()).toBe(42)
+
+    // The pending text "v3" differs from initial — a flush should be scheduled
+    await sleep(100)
+    expect(deps.editMessageText).toHaveBeenCalledTimes(1)
+    ac.abort()
+  })
+
+  test("concurrent updates during send store latest pending text", async () => {
+    let resolveFirst: ((v: { message_id: number }) => void) | null = null
+    deps.sendMessage = mock(
+      () => new Promise<{ message_id: number }>((resolve) => { resolveFirst = resolve }),
+    )
+    const ds = new DraftStream(deps, 123, ac.signal, 50)
+
+    // Start first update (goes into sending state)
+    const p1 = ds.update("first")
+    // These arrive while sending — should just update pending
+    ds.update("second")
+    ds.update("final text")
+
+    resolveFirst!({ message_id: 99 })
+    await p1
+
+    // After flush, the edit should contain "final text"
+    await sleep(100)
+    const editedText = deps.editMessageText.mock.calls[0]?.[2] as string
+    expect(editedText).toContain("final text")
+    ac.abort()
+  })
+
+  test("if sendMessage fails during race, subsequent updates retry send", async () => {
+    let callCount = 0
+    deps.sendMessage = mock(async () => {
+      callCount++
+      if (callCount === 1) throw new Error("network error")
+      return { message_id: 55 }
+    })
+    const ds = new DraftStream(deps, 123, ac.signal, 50)
+
+    // First update fails
+    await ds.update("attempt1")
+    expect(ds.getMessageId()).toBeNull()
+
+    // Second update should retry (sending flag is cleared after failure)
+    await ds.update("attempt2")
+    expect(ds.getMessageId()).toBe(55)
+    ac.abort()
+  })
 })

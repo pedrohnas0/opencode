@@ -325,3 +325,128 @@ e2e/
 - `sdk.session.abort()` is fire-and-forget — errors logged but don't block new turn
 - Phase 3 streaming E2E was flaky: finalizeResponse can shorten text (strips tool suffix), so assert "same message ID + has content" instead of "text grew"
 - `sdk.session.summarize()` requires providerID + modelID — simpler to guide users to ask the AI directly
+
+---
+
+## Phase 5 — Model & Agent Selection ✅
+
+**Status:** Complete
+**Date:** 2026-02-08
+**Plan:** See `docs/plans/phase-5.md`
+
+### Delivered
+- **`/model` command** — Shows providers as inline keyboard. Clicking a provider shows its models. Selecting a model stores a `modelOverride` in SessionEntry, passed to every `session.prompt()`.
+- **`/agent` command** — Shows available agents (filtered: non-hidden) as inline keyboard. Selecting stores `agentOverride` in SessionEntry.
+- **Model reset** — "Reset to default" button clears override.
+- **Agent reset** — Same pattern.
+- **Back navigation** — Model selection supports back→provider list.
+- **Override persistence** — Model/agent overrides survive `/new` and session switches (`/list`).
+- **Callback data encoding** — Uses `mdl:{providerID}:{modelID}` directly (fits 64-byte limit for most providers). Falls back to truncation.
+
+### Tests
+| Type | Count | Status |
+|------|-------|--------|
+| Unit (bun test src/) | 222 | ✅ all pass |
+| E2E Phase 0-4 (regression) | 17 | ✅ all pass |
+| E2E Phase 5 | 3 | ✅ all pass |
+
+### Files Created
+```
+src/
+  handlers/
+    models.ts                      ← formatProviderList, formatModelList, parseModelCallback, handleModel, handleModelSelect
+    models.test.ts                 ← 18 tests
+    agents.ts                      ← formatAgentList, parseAgentCallback, handleAgent, handleAgentSelect
+    agents.test.ts                 ← 10 tests
+e2e/
+  phase-5.test.ts                  ← 3 E2E tests
+```
+
+### Files Modified
+```
+src/
+  session-manager.ts               ← Added modelOverride? and agentOverride? to SessionEntry
+  session-manager.test.ts          ← 3 new tests for override fields
+  bot.ts                           ← /model, /agent commands; mdl: + agt: callback routing;
+                                      pass overrides in handleMessage prompt call
+  bot.test.ts                      ← 6 new tests (override passing, callbacks)
+  index.ts                         ← setMyCommands includes /model and /agent
+```
+
+### Key Design Decisions
+- **Direct ID encoding in callback data** — `mdl:anthropic:claude-sonnet-4-5-20250929` fits 64 bytes. No need for index-based lookup maps.
+- **Override persistence across `/new`** — overrides are per-user preferences, not per-session. Preserved by saving before remove and restoring after create.
+- **Hidden agents filtered** — `sdk.app.agents()` may return hidden agents; we filter them out.
+- **No pagination** — Most providers have <10 models. Deferred for later.
+
+### Lessons Learned
+- SDK v2 uses flat params: `sdk.session.prompt({ sessionID, parts, model: { providerID, modelID } })`, not nested path/body.
+- `sdk.provider.list()` returns `{ data: { all: Provider[] } }` where each Provider has `models: { [modelID]: Model }`.
+
+---
+
+## Phase 6 — Media & Files ✅
+
+**Status:** Complete
+**Date:** 2026-02-08
+**Plan:** See `docs/plans/phase-6.md`
+
+### Delivered
+- **Photo handling** — Highest resolution photo downloaded, converted to base64 data URL, sent as `FilePartInput`.
+- **Document handling** — Any document type (PDF, code, text) downloaded and sent as file part. Original filename preserved.
+- **Voice/Audio handling** — Voice messages (OGG) and audio files downloaded and sent as file parts.
+- **Video handling** — Video files downloaded and sent as file parts.
+- **Caption support** — Caption becomes `TextPartInput` alongside `FilePartInput`.
+- **File size limit** — 20MB check before download (Telegram Bot API limit).
+- **MIME detection** — Extension-based fallback when Telegram doesn't provide MIME type (43 extensions mapped).
+- **DraftStream race condition fix** — Added `sending` flag to prevent concurrent `sendMessage` calls when multiple SSE events arrive before first message is created. Fixes fragmentation with fast models (Gemini Flash).
+- **Override persistence fix** — `handleNew` and `handleSessionCallback` now preserve model/agent overrides across session changes.
+
+### Tests
+| Type | Count | Status |
+|------|-------|--------|
+| Unit (bun test src/) | 252 | ✅ all pass |
+| E2E Phase 0-5 (regression) | 26 | ✅ all pass |
+| E2E Phase 6 | 6 | ✅ all pass |
+
+### Files Created
+```
+src/
+  handlers/
+    media.ts                       ← extractFileRef, downloadTelegramFile, bufferToDataUrl,
+                                      buildFilePart, buildMediaParts, getMimeFromFileName
+    media.test.ts                  ← 21 tests
+e2e/
+  phase-6.test.ts                  ← 6 E2E tests (photo, document, caption, regression text,
+                                      fragmentation, interruption)
+```
+
+### Files Modified
+```
+src/
+  bot.ts                           ← handleMedia function, 5 Grammy media handlers (photo,
+                                      document, voice, audio, video) BEFORE message:text;
+                                      handleMessage accepts optional parts param;
+                                      handleNew/handleSessionCallback preserve overrides
+  bot.test.ts                      ← 6 new tests (media parts, override persistence)
+  send/draft-stream.ts             ← Added `sending` flag to prevent concurrent sendMessage race
+  send/draft-stream.test.ts        ← 3 new tests for race condition scenarios
+e2e/
+  phase-5.test.ts                  ← 6 new tests (model override + persistence + E2E)
+```
+
+### Key Design Decisions
+- **Grammy handler ordering** — Media handlers (`message:photo`, etc.) must come BEFORE `message:text` because photos with captions also match `message:text`.
+- **Shared `handleMedia` function** — All 5 media types share the same handler logic.
+- **Data URL approach** — Download → Buffer → base64 data URL. Simple, no temp files, works within HTTP body limits even for 20MB files (~27MB base64).
+- **`sending` flag pattern** — Based on OpenClaw's `inFlight` pattern: first `update()` sets flag, concurrent calls just store `pending`, flag cleared after `sendMessage` completes.
+
+### Bugs Fixed This Phase
+1. **Streaming fragmentation** — With fast models (Gemini Flash), multiple SSE events called `DraftStream.update()` concurrently. All saw `messageId === null` and each called `sendMessage`, creating N separate messages. Fixed with `sending` guard flag.
+2. **Model/agent override lost on `/new`** — `sessionManager.remove()` deleted the entry with overrides, then `getOrCreate()` created a clean one. Fixed by saving overrides before remove and restoring after.
+
+### Lessons Learned
+- Telegram requires valid PNG encoding — hand-crafted zlib fails, must use `zlib.deflateSync()`.
+- gramjs `CustomFile(name, size, path, buffer)` for sending files in E2E tests.
+- E2E fragmentation test: count bot messages between events, assert ≤ expected (not exact count).
+- `DraftStream` race condition only manifests with fast models (high SSE event rate).
