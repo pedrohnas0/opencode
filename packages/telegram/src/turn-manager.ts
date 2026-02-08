@@ -16,7 +16,7 @@ export type ActiveTurn = {
   accumulatedText: string
   toolSuffix: string
   timers: Set<ReturnType<typeof setTimeout>>
-  draft: { stop(): void; getMessageId(): number | null } | null
+  draft: { stop(): void; getMessageId(): number | null; update(text: string): Promise<void> } | null
 }
 
 export class TurnManager {

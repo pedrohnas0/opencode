@@ -8,7 +8,7 @@
  *   - Eviction only removes from memory — sessions persist on OpenCode server
  */
 
-import type { OpencodeClient } from "@opencode-ai/sdk"
+import type { OpencodeClient } from "@opencode-ai/sdk/v2"
 
 export type SessionEntry = {
   sessionId: string
@@ -48,7 +48,7 @@ export class SessionManager {
 
     // Create new session via SDK
     const result = await sdk.session.create({
-      body: { title: `Telegram ${chatKey}` },
+      title: `Telegram ${chatKey}`,
     })
 
     const session = result.data!

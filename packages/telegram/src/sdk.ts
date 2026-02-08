@@ -8,7 +8,7 @@
  * Returns { client, cleanup } where cleanup stops the spawned server (if any).
  */
 
-import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk"
+import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2"
 import { spawn as nodeSpawn } from "node:child_process"
 import { resolve } from "node:path"
 

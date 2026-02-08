@@ -65,10 +65,10 @@ describe("handleMessage", () => {
     await new Promise((r) => setTimeout(r, 10))
 
     expect(promptMock).toHaveBeenCalledTimes(1)
-    const call = promptMock.mock.calls[0][0]
-    expect(call.path.id).toBe("s1")
-    expect(call.body.parts[0].type).toBe("text")
-    expect(call.body.parts[0].text).toBe("hello world")
+    const call = promptMock.mock.calls[0]![0] as any
+    expect(call.sessionID).toBe("s1")
+    expect(call.parts[0].type).toBe("text")
+    expect(call.parts[0].text).toBe("hello world")
   })
 
   test("creates session automatically for unknown chat", async () => {

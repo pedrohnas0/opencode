@@ -121,7 +121,7 @@ describe("TurnManager", () => {
 
   test("draft can be set on turn and accessed", () => {
     const turn = tm.start("s1", 12345)
-    const fakeDraft = { stop: mock(() => {}), getMessageId: () => 42 }
+    const fakeDraft = { stop: mock(() => {}), getMessageId: () => 42, update: mock(async () => {}) }
     turn.draft = fakeDraft
     expect(tm.get("s1")!.draft).toBe(fakeDraft)
   })
@@ -129,7 +129,7 @@ describe("TurnManager", () => {
   test("end calls draft.stop() if draft exists", () => {
     const turn = tm.start("s1", 12345)
     const stopFn = mock(() => {})
-    turn.draft = { stop: stopFn, getMessageId: () => 42 }
+    turn.draft = { stop: stopFn, getMessageId: () => 42, update: async () => {} }
     tm.end("s1")
     expect(stopFn).toHaveBeenCalledTimes(1)
   })

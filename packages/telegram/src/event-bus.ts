@@ -10,7 +10,7 @@
  *   - Auto-reconnect with backoff on stream end
  */
 
-import type { OpencodeClient } from "@opencode-ai/sdk"
+import type { OpencodeClient } from "@opencode-ai/sdk/v2"
 import type { SessionManager } from "./session-manager"
 
 export type EventHandler = (

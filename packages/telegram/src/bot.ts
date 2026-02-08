@@ -9,7 +9,7 @@
 
 import { Bot } from "grammy"
 import type { Config } from "./config"
-import type { OpencodeClient } from "@opencode-ai/sdk"
+import type { OpencodeClient } from "@opencode-ai/sdk/v2"
 import type { SessionManager } from "./session-manager"
 import type { TurnManager, ActiveTurn } from "./turn-manager"
 import type { PendingRequests } from "./pending-requests"
@@ -81,7 +81,7 @@ export function createBot(config: Config, deps?: BotDeps) {
 
         await sdk.permission.reply({
           requestID: parsed.requestID,
-          reply: parsed.reply,
+          reply: parsed.reply as "once" | "always" | "reject",
         })
 
         const label =
@@ -130,15 +130,16 @@ export function createBot(config: Config, deps?: BotDeps) {
         sessionManager,
         turnManager,
         draftDeps: {
-          sendMessage: (id, t, o) => bot.api.sendMessage(id, t, o),
+          sendMessage: (id, t, o) =>
+            bot.api.sendMessage(id, t, o as any),
           editMessageText: (id, m, t, o) =>
-            bot.api.editMessageText(id, m, t, o),
+            bot.api.editMessageText(id, m, t, o as any),
         },
       })
 
       startTypingLoop(
         chatId,
-        (id, action) => bot.api.sendChatAction(id, action),
+        (id, action) => bot.api.sendChatAction(id, action as any),
         turn.abortController.signal,
       )
     })
@@ -176,11 +177,9 @@ export async function handleMessage(params: {
   // Fire-and-forget: don't block the Grammy handler.
   // The response comes via SSE events → DraftStream → finalizeResponse.
   sdk.session.prompt({
-    path: { id: entry.sessionId },
-    body: {
-      parts: [{ type: "text", text }],
-    },
-  }).catch((err) => {
+    sessionID: entry.sessionId,
+    parts: [{ type: "text", text }],
+  }).catch((err: unknown) => {
     console.error("Prompt error:", err)
   })
 

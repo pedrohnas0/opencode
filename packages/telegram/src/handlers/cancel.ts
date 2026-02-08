@@ -4,7 +4,7 @@
  * Calls sdk.session.abort() and cleans up the TurnManager.
  */
 
-import type { OpencodeClient } from "@opencode-ai/sdk"
+import type { OpencodeClient } from "@opencode-ai/sdk/v2"
 import type { SessionManager } from "../session-manager"
 import type { TurnManager } from "../turn-manager"
 
