@@ -302,4 +302,164 @@ describe("DraftStream", () => {
     expect(ds.getMessageId()).toBe(55)
     ac.abort()
   })
+
+  // --- inFlight guard (Phase 6.6) ---
+
+  test("while edit is in-flight, update does not call editMessageText again", async () => {
+    // Simulate a slow editMessageText (e.g., blocked in apiThrottler Bottleneck)
+    let resolveEdit: (() => void) | null = null
+    deps.editMessageText = mock(
+      () => new Promise<void>((resolve) => { resolveEdit = resolve }),
+    )
+    const ds = new DraftStream(deps, 123, ac.signal, 50)
+
+    // Initialize with sendMessage
+    await ds.update("hello")
+
+    // Trigger first edit via direct update + wait for throttle
+    ds.update("edit 1")
+    await sleep(80)
+    // First edit should be in-flight now
+    expect(deps.editMessageText).toHaveBeenCalledTimes(1)
+
+    // These arrive while edit is in-flight — should NOT create more edit calls
+    ds.update("edit 2")
+    ds.update("edit 3")
+    ds.update("edit 4")
+    await sleep(80)
+
+    // Still only 1 editMessageText call (the in-flight one)
+    expect(deps.editMessageText).toHaveBeenCalledTimes(1)
+
+    // Resolve the in-flight edit
+    resolveEdit!()
+    await sleep(80)
+
+    // Now a SECOND edit should fire with the latest text ("edit 4")
+    expect(deps.editMessageText).toHaveBeenCalledTimes(2)
+    const lastEditText = deps.editMessageText.mock.calls[1][2] as string
+    expect(lastEditText).toContain("edit 4")
+    ac.abort()
+  })
+
+  test("after in-flight edit completes, pending text is flushed with latest value", async () => {
+    let resolveEdit: (() => void) | null = null
+    deps.editMessageText = mock(
+      () => new Promise<void>((resolve) => { resolveEdit = resolve }),
+    )
+    const ds = new DraftStream(deps, 123, ac.signal, 50)
+    await ds.update("hello")
+
+    // Start edit
+    ds.update("version A")
+    await sleep(80)
+    expect(deps.editMessageText).toHaveBeenCalledTimes(1)
+
+    // Update pending while in-flight
+    ds.update("version B")
+    ds.update("version C — the final one")
+
+    // Resolve the first edit
+    resolveEdit!()
+    await sleep(80)
+
+    // Second edit should carry "version C"
+    expect(deps.editMessageText).toHaveBeenCalledTimes(2)
+    const text = deps.editMessageText.mock.calls[1][2] as string
+    expect(text).toContain("version C")
+    ac.abort()
+  })
+
+  test("multiple in-flight cycles produce exactly one edit per cycle", async () => {
+    const editResolvers: Array<() => void> = []
+    deps.editMessageText = mock(
+      () => new Promise<void>((resolve) => { editResolvers.push(resolve) }),
+    )
+    const ds = new DraftStream(deps, 123, ac.signal, 30)
+    await ds.update("init")
+
+    // Cycle 1: trigger edit
+    ds.update("cycle 1")
+    await sleep(50)
+    expect(deps.editMessageText).toHaveBeenCalledTimes(1)
+
+    // Update during cycle 1
+    ds.update("cycle 2 pending")
+    editResolvers[0]!() // resolve cycle 1
+    await sleep(50)
+
+    // Cycle 2: should fire
+    expect(deps.editMessageText).toHaveBeenCalledTimes(2)
+
+    // Update during cycle 2
+    ds.update("cycle 3 pending")
+    editResolvers[1]!() // resolve cycle 2
+    await sleep(50)
+
+    // Cycle 3: should fire
+    expect(deps.editMessageText).toHaveBeenCalledTimes(3)
+    editResolvers[2]!()
+    ac.abort()
+  })
+
+  test("stop during in-flight edit prevents subsequent flushes", async () => {
+    let resolveEdit: (() => void) | null = null
+    deps.editMessageText = mock(
+      () => new Promise<void>((resolve) => { resolveEdit = resolve }),
+    )
+    const ds = new DraftStream(deps, 123, ac.signal, 50)
+    await ds.update("hello")
+
+    // Start edit
+    ds.update("in flight")
+    await sleep(80)
+    expect(deps.editMessageText).toHaveBeenCalledTimes(1)
+
+    // Update pending then stop
+    ds.update("should never be sent")
+    ds.stop()
+
+    // Resolve the in-flight edit
+    resolveEdit!()
+    await sleep(100)
+
+    // No second edit should happen (stopped)
+    expect(deps.editMessageText).toHaveBeenCalledTimes(1)
+  })
+
+  test("flush guard: rapid updates before and during in-flight produce minimal edits", async () => {
+    let resolveEdit: (() => void) | null = null
+    deps.editMessageText = mock(
+      () => new Promise<void>((resolve) => { resolveEdit = resolve }),
+    )
+    const ds = new DraftStream(deps, 123, ac.signal, 10)
+    await ds.update("hello")
+
+    // Rapid updates — all sync, only 1 flush timer created
+    for (let i = 0; i < 20; i++) {
+      ds.update(`rapid update ${i}`)
+    }
+    await sleep(50) // timer fires → flush with "rapid update 19"
+
+    // Only 1 edit in-flight (all 20 updates coalesced into 1 flush)
+    expect(deps.editMessageText).toHaveBeenCalledTimes(1)
+    const firstText = deps.editMessageText.mock.calls[0][2] as string
+    expect(firstText).toContain("rapid update 19")
+
+    // Now update DURING in-flight (simulating new SSE events)
+    ds.update("arrived during edit")
+
+    // Still only 1 edit (guard prevents new flush)
+    expect(deps.editMessageText).toHaveBeenCalledTimes(1)
+
+    // Resolve the in-flight edit
+    resolveEdit!()
+    await sleep(50)
+
+    // Now a second edit fires with the text that arrived during in-flight
+    expect(deps.editMessageText).toHaveBeenCalledTimes(2)
+    const secondText = deps.editMessageText.mock.calls[1][2] as string
+    expect(secondText).toContain("arrived during edit")
+    ac.abort()
+  })
 })
