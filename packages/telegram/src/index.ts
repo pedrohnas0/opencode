@@ -15,6 +15,8 @@ import { SessionManager } from "./session-manager"
 import { TurnManager } from "./turn-manager"
 import { EventBus } from "./event-bus"
 import { PendingRequests } from "./pending-requests"
+import { apiThrottler } from "@grammyjs/transformer-throttler"
+import { createApiServer } from "./api-server"
 import { markdownToTelegramHtml } from "./send/format"
 import { chunkMessage } from "./send/chunker"
 import { formatPermissionMessage } from "./handlers/permissions"
@@ -62,6 +64,16 @@ try {
 
 // --- Create bot with deps ---
 const bot = createBot(config, { sdk, sessionManager, turnManager, pendingRequests })
+
+// API throttler — automatic 429 rate limit handling for Telegram API
+bot.api.config.use(apiThrottler() as any)
+
+// --- Bot Control API server ---
+const apiServer = createApiServer(
+  { sessionManager, turnManager, sdk },
+  config.apiPort,
+)
+console.log(`Bot Control API on http://127.0.0.1:${config.apiPort}`)
 
 // --- Response sender (format + chunk + send) ---
 async function sendFormattedResponse(chatId: number, markdown: string) {
@@ -249,6 +261,7 @@ const shutdown = async () => {
   clearInterval(cleanupInterval)
   eventBus.stop()
   turnManager.abortAll()
+  apiServer.stop()
   await bot.stop()
   sdkHandle.cleanup()
   process.exit(0)

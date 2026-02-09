@@ -450,3 +450,69 @@ e2e/
 - gramjs `CustomFile(name, size, path, buffer)` for sending files in E2E tests.
 - E2E fragmentation test: count bot messages between events, assert ≤ expected (not exact count).
 - `DraftStream` race condition only manifests with fast models (high SSE event rate).
+
+---
+
+## Phase 6.5 — Production Hardening + Bot Control API ✅
+
+**Status:** Complete — deployed to prod as v1.3.0
+**Date:** 2026-02-08
+**Plan:** See `docs/plans/phase-6.5.md`
+**Audit:** See `docs/AUDIT.md`
+
+### Delivered
+- **EventBus auto-reconnect (G1/G5)** — SSE stream break → auto-reconnect with exponential backoff (2s→30s, 1.8x factor, ±25% jitter). Cancellable via `stop()`.
+- **Grammy `apiThrottler()` (G2)** — API transformer that queues and retries on Telegram 429 rate limits.
+- **Grammy `sequentialize()` (G3)** — First middleware, ensures per-chat serial update processing. Prevents race conditions with webhooks.
+- **Smart /model filtering (G12)** — Only connected providers, models grouped by family (most recent per family), active model marked with ✓. Reduces ~400 models → ~16.
+- **Bot Control API** — Hono HTTP server on `127.0.0.1:4097` exposing 7 endpoints for AI-driven model/agent/session control.
+- **SKILL.md** — Teaches AI how to discover its sessionId and use the Bot Control API.
+
+### Tests
+| Type | Count | Status |
+|------|-------|--------|
+| Unit (bun test src/) | 295 | ✅ all pass |
+| E2E Phase 6.5 | 9 | ✅ all pass |
+| E2E Full regression | 41 | ✅ all pass |
+
+### Files Created
+```
+src/
+  api-server.ts                    ← Hono app + createApiServer (Bot Control API)
+  api-server.test.ts               ← 15 tests (all endpoints via app.request())
+e2e/
+  phase-6.5.test.ts                ← 9 E2E tests (/model filtering + Bot Control API)
+docs/plans/
+  phase-6.5.md                     ← Phase plan
+```
+
+### Deployed
+- SKILL.md at `~/.claude/skills/telegram-control/` (WSL + VPS)
+- npm: `@pedrohnas/opencode-telegram@1.3.0`
+
+### Files Modified
+```
+src/
+  event-bus.ts                     ← reconnectLoop + exponential backoff + cancellable sleep
+  event-bus.test.ts                ← 13 new tests (reconnect, backoff, jitter, error recovery)
+  bot.ts                           ← sequentialize() middleware + filterModels in mdl: callback
+  bot.test.ts                      ← 3 new tests (sequentialize, throttler import)
+  config.ts                        ← Added apiPort config (TELEGRAM_API_PORT, default 4097)
+  config.test.ts                   ← 2 new tests for apiPort
+  index.ts                         ← apiThrottler + createApiServer + apiServer.stop in shutdown
+  handlers/models.ts               ← filterModels(), formatProviderList(connected), formatModelList(activeModelID)
+  handlers/models.test.ts          ← 8 new tests (filtering, connected, ✓ marker)
+  package.json                     ← Added hono, @grammyjs/transformer-throttler, @grammyjs/runner
+```
+
+### New Dependencies
+- `hono` ^4.x — HTTP framework for Bot Control API
+- `@grammyjs/transformer-throttler` ^1.x — Telegram API 429 rate limit handling
+- `@grammyjs/runner` ^2.x — sequentialize middleware for per-chat serial processing
+
+### Key Design Decisions
+- **Bot Control API on localhost** — AI calls it via `curl` from bash. No auth needed (bound to 127.0.0.1 only).
+- **AI self-identification** — AI discovers its sessionId by calling OpenCode session list (`localhost:4096/session`), matches title pattern `"Telegram {chatId}"`.
+- **filterModels pattern** — Group by family, sort by release_date descending, pick first. Handles missing family (uses model id as key).
+- **Hono test pattern** — `app.request()` — no real Bun.serve needed in tests.
+- **EventBus backoff** — `delay = min(maxDelay, initialDelay × factor^attempt) × (1 ± jitter)`. Cancellable sleep via sleepReject.

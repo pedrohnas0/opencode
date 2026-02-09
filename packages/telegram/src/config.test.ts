@@ -127,4 +127,20 @@ describe("loadConfig", () => {
     const config = loadConfig()
     expect(config.allowAllUsers).toBe(false)
   })
+
+  test("apiPort defaults to 4097 when not set", async () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123:ABC"
+    delete process.env.TELEGRAM_API_PORT
+    const { loadConfig } = await import("./config?apiport1")
+    const config = loadConfig()
+    expect(config.apiPort).toBe(4097)
+  })
+
+  test("apiPort reads from TELEGRAM_API_PORT env var", async () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123:ABC"
+    process.env.TELEGRAM_API_PORT = "5555"
+    const { loadConfig } = await import("./config?apiport2")
+    const config = loadConfig()
+    expect(config.apiPort).toBe(5555)
+  })
 })

@@ -39,6 +39,32 @@ describe("START_MESSAGE", () => {
   })
 })
 
+// --- Phase 6.5: sequentialize middleware ---
+
+describe("sequentialize middleware", () => {
+  test("bot with sequentialize still creates successfully", () => {
+    const bot = createBot(testConfig)
+    expect(bot).toBeDefined()
+    // sequentialize is first middleware — bot should have more handlers than without it
+  })
+
+  test("sequentialize import is valid", async () => {
+    const { sequentialize } = await import("@grammyjs/runner")
+    expect(sequentialize).toBeFunction()
+    // Verify key function works
+    const resolver = (ctx: any) => String(ctx.chat?.id ?? "")
+    expect(resolver({ chat: { id: 123 } })).toBe("123")
+    expect(resolver({})).toBe("")
+  })
+
+  test("apiThrottler import is valid", async () => {
+    const { apiThrottler } = await import("@grammyjs/transformer-throttler")
+    expect(apiThrottler).toBeFunction()
+    const throttler = apiThrottler()
+    expect(throttler).toBeFunction()
+  })
+})
+
 // --- Phase 1 tests: handleMessage and handleNew ---
 
 describe("handleMessage", () => {

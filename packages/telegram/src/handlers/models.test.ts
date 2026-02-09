@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, mock } from "bun:test"
 import { SessionManager } from "../session-manager"
 import {
   parseModelCallback,
+  filterModels,
   formatProviderList,
   formatModelList,
   formatCurrentModel,
@@ -43,19 +44,70 @@ describe("parseModelCallback", () => {
   })
 })
 
+// --- filterModels ---
+
+describe("filterModels", () => {
+  test("groups by family, returns most recent per family", () => {
+    const models = [
+      { id: "opus-4", name: "Opus 4", family: "opus", release_date: "2025-04-01" },
+      { id: "opus-4.5", name: "Opus 4.5", family: "opus", release_date: "2025-09-01" },
+      { id: "opus-4.6", name: "Opus 4.6", family: "opus", release_date: "2025-12-01" },
+      { id: "sonnet-4.5", name: "Sonnet 4.5", family: "sonnet", release_date: "2025-09-01" },
+    ]
+    const result = filterModels(models)
+    expect(result.length).toBe(2)
+    expect(result.find((m: any) => m.family === "opus").id).toBe("opus-4.6")
+    expect(result.find((m: any) => m.family === "sonnet").id).toBe("sonnet-4.5")
+  })
+
+  test("keeps models without family field (uses id as key)", () => {
+    const models = [
+      { id: "custom-model", name: "Custom" },
+      { id: "other-model", name: "Other" },
+    ]
+    const result = filterModels(models)
+    expect(result.length).toBe(2)
+  })
+
+  test("handles single model per family (no-op)", () => {
+    const models = [
+      { id: "sonnet-4.5", name: "Sonnet 4.5", family: "sonnet", release_date: "2025-09-01" },
+    ]
+    const result = filterModels(models)
+    expect(result.length).toBe(1)
+    expect(result[0].id).toBe("sonnet-4.5")
+  })
+
+  test("sorts result by release_date descending", () => {
+    const models = [
+      { id: "old", name: "Old", family: "a", release_date: "2024-01-01" },
+      { id: "new", name: "New", family: "b", release_date: "2025-12-01" },
+      { id: "mid", name: "Mid", family: "c", release_date: "2025-06-01" },
+    ]
+    const result = filterModels(models)
+    expect(result[0].id).toBe("new")
+    expect(result[1].id).toBe("mid")
+    expect(result[2].id).toBe("old")
+  })
+
+  test("handles empty array", () => {
+    expect(filterModels([])).toEqual([])
+  })
+})
+
 // --- formatProviderList ---
 
 describe("formatProviderList", () => {
-  test("formats 2 providers as inline keyboard rows", () => {
+  test("formats 2 providers as inline keyboard rows with model count", () => {
     const providers = [
-      { id: "anthropic", name: "Anthropic", models: { m1: {} } },
+      { id: "anthropic", name: "Anthropic", models: { m1: {}, m2: {} } },
       { id: "openai", name: "OpenAI", models: { m1: {} } },
     ]
     const result = formatProviderList(providers)
     expect(result.reply_markup.inline_keyboard.length).toBe(2)
-    expect(result.reply_markup.inline_keyboard[0][0].text).toBe("Anthropic")
+    expect(result.reply_markup.inline_keyboard[0][0].text).toBe("Anthropic (2)")
     expect(result.reply_markup.inline_keyboard[0][0].callback_data).toBe("mdl:anthropic")
-    expect(result.reply_markup.inline_keyboard[1][0].text).toBe("OpenAI")
+    expect(result.reply_markup.inline_keyboard[1][0].text).toBe("OpenAI (1)")
   })
 
   test("returns 'No providers' when list is empty", () => {
@@ -71,7 +123,31 @@ describe("formatProviderList", () => {
     ]
     const result = formatProviderList(providers)
     expect(result.reply_markup.inline_keyboard.length).toBe(1)
-    expect(result.reply_markup.inline_keyboard[0][0].text).toBe("Anthropic")
+    expect(result.reply_markup.inline_keyboard[0][0].text).toContain("Anthropic")
+  })
+
+  test("filters to only connected providers when connected array provided", () => {
+    const providers = [
+      { id: "anthropic", name: "Anthropic", models: { m1: {} } },
+      { id: "openai", name: "OpenAI", models: { m1: {} } },
+      { id: "google", name: "Google", models: { m1: {} } },
+    ]
+    const connected = ["anthropic", "google"]
+    const result = formatProviderList(providers, connected)
+    expect(result.reply_markup.inline_keyboard.length).toBe(2)
+    const texts = result.reply_markup.inline_keyboard.map((r: any) => r[0].callback_data)
+    expect(texts).toContain("mdl:anthropic")
+    expect(texts).toContain("mdl:google")
+    expect(texts).not.toContain("mdl:openai")
+  })
+
+  test("shows all providers when connected not provided (backward compat)", () => {
+    const providers = [
+      { id: "a", name: "A", models: { m1: {} } },
+      { id: "b", name: "B", models: { m1: {} } },
+    ]
+    const result = formatProviderList(providers)
+    expect(result.reply_markup.inline_keyboard.length).toBe(2)
   })
 })
 
@@ -108,6 +184,26 @@ describe("formatModelList", () => {
     const result = formatModelList("openai", "OpenAI", models)
     expect(result.reply_markup.inline_keyboard[0][0].callback_data).toBe("mdl:openai:gpt-4o")
   })
+
+  test("marks active model with ✓ prefix", () => {
+    const models = [
+      { id: "claude-sonnet", name: "Claude Sonnet" },
+      { id: "claude-opus", name: "Claude Opus" },
+    ]
+    const result = formatModelList("anthropic", "Anthropic", models, "claude-opus")
+    expect(result.reply_markup.inline_keyboard[0][0].text).toBe("Claude Sonnet")
+    expect(result.reply_markup.inline_keyboard[1][0].text).toBe("✓ Claude Opus")
+  })
+
+  test("no ✓ when activeModelID not provided", () => {
+    const models = [
+      { id: "claude-sonnet", name: "Claude Sonnet" },
+      { id: "claude-opus", name: "Claude Opus" },
+    ]
+    const result = formatModelList("anthropic", "Anthropic", models)
+    expect(result.reply_markup.inline_keyboard[0][0].text).toBe("Claude Sonnet")
+    expect(result.reply_markup.inline_keyboard[1][0].text).toBe("Claude Opus")
+  })
 })
 
 // --- formatCurrentModel ---
@@ -142,6 +238,7 @@ describe("handleModel", () => {
             all: [
               { id: "anthropic", name: "Anthropic", models: { m1: { id: "m1", name: "M1" } } },
             ],
+            connected: ["anthropic"],
           },
         })),
       },
@@ -155,12 +252,33 @@ describe("handleModel", () => {
   test("returns 'No providers' when list is empty", async () => {
     const sdk = {
       provider: {
-        list: mock(async () => ({ data: { all: [] } })),
+        list: mock(async () => ({ data: { all: [], connected: [] } })),
       },
     }
     sm.set("123", { sessionId: "s1", directory: "/tmp" })
     const result = await handleModel({ sdk: sdk as any, sessionManager: sm, chatKey: "123" })
     expect(result.text).toContain("No providers")
+  })
+
+  test("passes connected array to formatProviderList", async () => {
+    const sdk = {
+      provider: {
+        list: mock(async () => ({
+          data: {
+            all: [
+              { id: "anthropic", name: "Anthropic", models: { m1: { id: "m1", name: "M1" } } },
+              { id: "openai", name: "OpenAI", models: { m1: { id: "m1", name: "M1" } } },
+            ],
+            connected: ["anthropic"],
+          },
+        })),
+      },
+    }
+    sm.set("123", { sessionId: "s1", directory: "/tmp" })
+    const result = await handleModel({ sdk: sdk as any, sessionManager: sm, chatKey: "123" })
+    // Only anthropic should be shown (connected)
+    expect(result.reply_markup.inline_keyboard.length).toBe(1)
+    expect(result.reply_markup.inline_keyboard[0][0].callback_data).toBe("mdl:anthropic")
   })
 })
 

@@ -1,6 +1,6 @@
 {
   "name": "@opencode-ai/telegram",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "type": "module",
   "license": "MIT",
   "scripts": {
@@ -10,8 +10,11 @@
     "typecheck": "tsgo --noEmit"
   },
   "dependencies": {
+    "@grammyjs/runner": "2.0.3",
+    "@grammyjs/transformer-throttler": "1.2.1",
     "@opencode-ai/sdk": "workspace:*",
-    "grammy": "^1.35.0"
+    "grammy": "^1.35.0",
+    "hono": "4.11.9"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",

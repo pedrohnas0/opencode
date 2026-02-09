@@ -8,6 +8,7 @@
  */
 
 import { Bot } from "grammy"
+import { sequentialize } from "@grammyjs/runner"
 import type { Config } from "./config"
 import type { OpencodeClient } from "@opencode-ai/sdk/v2"
 import type { SessionManager } from "./session-manager"
@@ -37,6 +38,7 @@ import {
   parseModelCallback,
   formatProviderList,
   formatModelList,
+  filterModels,
 } from "./handlers/models"
 import {
   handleAgent,
@@ -68,7 +70,10 @@ export type BotDeps = {
 export function createBot(config: Config, deps?: BotDeps) {
   const bot = new Bot(config.botToken)
 
-  // Allowlist middleware — must be first (blocks unauthorized users)
+  // Sequentialize — ensures per-chat serial processing (prevents race conditions)
+  bot.use(sequentialize((ctx) => String(ctx.chat?.id ?? "")))
+
+  // Allowlist middleware — blocks unauthorized users
   bot.use(createAllowlistMiddleware(config.allowedUsers, config.allowAllUsers))
 
   bot.command("start", async (ctx) => {
@@ -232,14 +237,22 @@ export function createBot(config: Config, deps?: BotDeps) {
 
         if (parsed.type === "provider") {
           const provResult = await sdk.provider.list()
-          const providers = (provResult as any).data?.all ?? []
+          const data = (provResult as any).data ?? {}
+          const providers = data.all ?? []
+          const defaults = data.default ?? {}
           const provider = providers.find((p: any) => p.id === parsed.providerID)
           if (!provider) {
             await ctx.editMessageText("Provider not found.")
             return
           }
-          const models = Object.values(provider.models ?? {}) as any[]
-          const result = formatModelList(parsed.providerID, provider.name || parsed.providerID, models)
+          const allModels = Object.values(provider.models ?? {}) as any[]
+          const filtered = filterModels(allModels)
+          const entry = sessionManager.get(chatKey)
+          const activeModelID =
+            entry?.modelOverride?.providerID === parsed.providerID
+              ? entry.modelOverride.modelID
+              : defaults[parsed.providerID]
+          const result = formatModelList(parsed.providerID, provider.name || parsed.providerID, filtered, activeModelID)
           await ctx.editMessageText(result.text, { reply_markup: result.reply_markup })
           return
         }

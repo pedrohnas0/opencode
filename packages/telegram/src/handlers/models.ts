@@ -3,8 +3,9 @@
  *
  * Exports:
  *   - parseModelCallback(data) — parse "mdl:" callback data
- *   - formatProviderList(providers) — inline keyboard of providers
- *   - formatModelList(providerID, providerName, models) — inline keyboard of models
+ *   - filterModels(models) — group by family, keep most recent per family
+ *   - formatProviderList(providers, connected?) — inline keyboard of providers
+ *   - formatModelList(providerID, providerName, models, activeModelID?) — inline keyboard of models
  *   - formatCurrentModel(override?) — text showing current selection
  *   - handleModel(params) — fetch providers, return keyboard
  *   - handleModelSelect(params) — store model override in SessionEntry
@@ -42,11 +43,53 @@ export function parseModelCallback(data: string): ModelCallbackResult | null {
   return { type: "model", providerID, modelID }
 }
 
-export function formatProviderList(providers: any[]): {
+/**
+ * Filter models: group by family, keep only the most recent per family.
+ * Models without a family field use their id as key (no grouping).
+ */
+export function filterModels(models: any[]): any[] {
+  const families = new Map<string, any[]>()
+  for (const m of models) {
+    const key = m.family || m.id
+    if (!families.has(key)) families.set(key, [])
+    families.get(key)!.push(m)
+  }
+
+  const filtered: any[] = []
+  for (const [, members] of families) {
+    if (members.length === 1) {
+      filtered.push(members[0])
+    } else {
+      members.sort((a: any, b: any) =>
+        (b.release_date ?? "").localeCompare(a.release_date ?? ""),
+      )
+      filtered.push(members[0])
+    }
+  }
+
+  // Sort final list by release_date descending (newest first)
+  filtered.sort((a: any, b: any) =>
+    (b.release_date ?? "").localeCompare(a.release_date ?? ""),
+  )
+
+  return filtered
+}
+
+export function formatProviderList(
+  providers: any[],
+  connected?: string[],
+): {
   text: string
   reply_markup: { inline_keyboard: any[][] }
 } {
-  const withModels = providers.filter(
+  // If connected list provided, filter to only those providers
+  let filtered = providers
+  if (connected) {
+    const connSet = new Set(connected)
+    filtered = providers.filter((p) => connSet.has(p.id))
+  }
+
+  const withModels = filtered.filter(
     (p) => p.models && Object.keys(p.models).length > 0,
   )
 
@@ -54,9 +97,12 @@ export function formatProviderList(providers: any[]): {
     return { text: "No providers available.", reply_markup: { inline_keyboard: [] } }
   }
 
-  const rows = withModels.map((p) => [
-    { text: p.name || p.id, callback_data: `mdl:${p.id}` },
-  ])
+  const rows = withModels.map((p) => {
+    const modelCount = Object.keys(p.models).length
+    return [
+      { text: `${p.name || p.id} (${modelCount})`, callback_data: `mdl:${p.id}` },
+    ]
+  })
 
   return {
     text: "Select a provider:",
@@ -68,6 +114,7 @@ export function formatModelList(
   providerID: string,
   providerName: string,
   models: any[],
+  activeModelID?: string,
 ): {
   text: string
   reply_markup: { inline_keyboard: any[][] }
@@ -81,9 +128,12 @@ export function formatModelList(
     }
   }
 
-  const rows = models.map((m) => [
-    { text: m.name || m.id, callback_data: `mdl:${providerID}:${m.id}` },
-  ])
+  const rows = models.map((m) => {
+    const prefix = activeModelID && m.id === activeModelID ? "✓ " : ""
+    return [
+      { text: `${prefix}${m.name || m.id}`, callback_data: `mdl:${providerID}:${m.id}` },
+    ]
+  })
 
   rows.push(backRow)
 
@@ -109,10 +159,12 @@ export async function handleModel(params: {
 }): Promise<{ text: string; reply_markup: { inline_keyboard: any[][] } }> {
   const { sdk, sessionManager, chatKey } = params
   const result = await sdk.provider.list()
-  const providers = (result as any).data?.all ?? []
+  const data = (result as any).data ?? {}
+  const providers = data.all ?? []
+  const connected = data.connected as string[] | undefined
   const entry = sessionManager.get(chatKey)
   const currentText = formatCurrentModel(entry?.modelOverride)
-  const list = formatProviderList(providers)
+  const list = formatProviderList(providers, connected)
 
   return {
     text: `${currentText}\n\n${list.text}`,
